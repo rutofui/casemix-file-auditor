@@ -8,7 +8,7 @@ import pandas as pd
 from src.config import PDFCheckConfig
 from src.matcher import build_file_review, build_pdf_content_review
 from src.parser_excel import read_claims_excel
-from src.parser_file_list import build_file_entry, parse_file_list_text
+from src.parser_file_list import build_file_entry, parse_file_list_text, scan_pdf_folder
 from src.pdf_parallel import check_pdfs_parallel
 from src.pdf_checker import check_pdf
 
@@ -201,3 +201,56 @@ def test_parallel_pdf_check_matches_serial_results() -> None:
             assert parallel_results[source_id].lip_detected == serial_results[source_id].lip_detected
             assert parallel_results[source_id].billing_detected == serial_results[source_id].billing_detected
             assert parallel_results[source_id].scan_detected == serial_results[source_id].scan_detected
+
+
+def test_file_review_can_scan_local_folder_instead_of_txt_list() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        excel_path = root / "klaim.xlsx"
+        sep_complete = "0132R0770526V001270"
+        sep_missing_pdf = "0132R0770526V001271"
+        sep_wrong_folder = "0132R0770526V001272"
+
+        pd.DataFrame(
+            [
+                {
+                    "No SEP": sep_complete,
+                    "Tanggal Pulang": "2026-05-01",
+                    "No RM": "RM001",
+                    "Nama Pasien": "Pasien A",
+                    "Diagnosa": "A00",
+                },
+                {
+                    "No SEP": sep_missing_pdf,
+                    "Tanggal Pulang": "2026-05-02",
+                    "No RM": "RM002",
+                    "Nama Pasien": "Pasien B",
+                    "Diagnosa": "B00",
+                },
+                {
+                    "No SEP": sep_wrong_folder,
+                    "Tanggal Pulang": "2026-05-01",
+                    "No RM": "RM003",
+                    "Nama Pasien": "Pasien C",
+                    "Diagnosa": "C00",
+                },
+            ]
+        ).to_excel(excel_path, index=False)
+
+        pdf_root = root / "Casemix" / "Pending" / "2026" / "05. Mei" / "Rawat inap"
+        complete_pdf = pdf_root / "01" / f"{sep_complete}.pdf"
+        wrong_folder_pdf = pdf_root / "02" / f"{sep_wrong_folder}.pdf"
+        _write_pdf(complete_pdf, _complete_claim_text(sep_complete), with_scan_image=True)
+        _write_pdf(wrong_folder_pdf, _complete_claim_text(sep_wrong_folder), with_scan_image=True)
+
+        claims = read_claims_excel(str(excel_path)).df
+        folder_entries = scan_pdf_folder(str(pdf_root), source_name="folder", is_index_source=True).df
+        review_df, orphan_df, summary = build_file_review(claims, folder_entries)
+
+        assert summary["Total klaim"] == 3
+        assert summary["PDF ditemukan"] == 2
+        assert summary["Belum ada PDF"] == 1
+        assert review_df.loc[0, "Status Akhir"] == "Lengkap"
+        assert review_df.loc[1, "Status Akhir"] == "Kurang PDF"
+        assert review_df.loc[2, "Status Akhir"] == "Salah Folder"
+        assert orphan_df.empty

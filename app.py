@@ -35,7 +35,7 @@ def main() -> None:
     with left:
         _render_panel_header(
             "Review Jumlah Berkas",
-            "Cocokkan daftar klaim Excel dengan indeks file PDF dari list TXT.",
+            "Cocokkan daftar klaim Excel dengan indeks file PDF dari TXT atau folder lokal.",
             "file-panel",
         )
         file_excel = st.file_uploader(
@@ -43,20 +43,40 @@ def main() -> None:
             type=["xlsx", "xls"],
             key="file_review_excel",
         )
-        st.caption("Command Prompt untuk membuat list berkas klaim:")
-        st.code("dir /s /b > list_berkas_klaim.txt", language="bat")
-        file_list = st.file_uploader(
-            "list_berkas_klaim.txt",
-            type=["txt"],
-            key="file_review_list",
+        file_source_mode = st.radio(
+            "Sumber data PDF",
+            ["list_berkas_klaim.txt", "Folder Berkas Lokal"],
+            horizontal=True,
+            key="file_review_source_mode",
         )
+        file_list = None
+        file_folder_path = ""
+        if file_source_mode == "list_berkas_klaim.txt":
+            st.caption("Command Prompt untuk membuat list berkas klaim:")
+            st.code("dir /s /b > list_berkas_klaim.txt", language="bat")
+            file_list = st.file_uploader(
+                "list_berkas_klaim.txt",
+                type=["txt"],
+                key="file_review_list",
+            )
+        else:
+            file_folder_path = st.text_input(
+                "Folder Berkas Lokal",
+                key="file_review_folder",
+                placeholder=r"Contoh: D:\Casemix\Pending\2026",
+            )
         if st.button(
             "Jalankan Review Jumlah Berkas",
             type="primary",
             width="stretch",
             key="run_file_review",
         ):
-            _run_file_review(excel_file=file_excel, file_list=file_list)
+            _run_file_review(
+                excel_file=file_excel,
+                source_mode=file_source_mode,
+                file_list=file_list,
+                folder_path=file_folder_path,
+            )
         _render_file_panel()
 
     with right:
@@ -147,21 +167,36 @@ def _automatic_pdf_check_config() -> PDFCheckConfig:
 def _run_file_review(
     *,
     excel_file,
+    source_mode: str,
     file_list,
+    folder_path: str,
 ) -> None:
     if excel_file is None:
         st.error("Upload Excel daftar klaim terlebih dahulu.")
         return
-    if file_list is None:
+    if source_mode == "list_berkas_klaim.txt" and file_list is None:
         st.error("Upload list_berkas_klaim.txt terlebih dahulu.")
+        return
+    if source_mode == "Folder Berkas Lokal" and not folder_path.strip():
+        st.error("Isi path Folder Berkas Lokal terlebih dahulu.")
         return
 
     try:
         with st.spinner("Mengecek jumlah berkas..."):
             excel_result = read_claims_excel(excel_file)
-            list_entries = _parse_uploaded_file_list(file_list)
-            _show_file_input_warnings(excel_result.warnings, file_list, list_entries)
-            review_df, orphan_df, summary = build_file_review(excel_result.df, list_entries)
+            file_entries = _build_file_review_entries(
+                source_mode=source_mode,
+                file_list=file_list,
+                folder_path=folder_path,
+            )
+            _show_file_input_warnings(
+                excel_result.warnings,
+                source_mode=source_mode,
+                file_list=file_list,
+                folder_path=folder_path,
+                file_entries=file_entries,
+            )
+            review_df, orphan_df, summary = build_file_review(excel_result.df, file_entries)
             export_bytes = export_review_to_excel(
                 review_df,
                 orphan_df,
@@ -236,13 +271,32 @@ def _run_content_review(
 
 def _show_file_input_warnings(
     excel_warnings: list[str],
+    *,
+    source_mode: str,
     file_list,
-    list_entries: pd.DataFrame,
+    folder_path: str,
+    file_entries: pd.DataFrame,
 ) -> None:
     for warning in excel_warnings:
         st.warning(warning)
-    if file_list is not None and list_entries.empty:
+    if source_mode == "list_berkas_klaim.txt" and file_list is not None and file_entries.empty:
         st.warning("list_berkas_klaim.txt tidak menghasilkan data PDF.")
+    if source_mode == "Folder Berkas Lokal" and folder_path.strip() and file_entries.empty:
+        st.warning("Folder Berkas Lokal tidak menghasilkan data PDF.")
+
+
+def _build_file_review_entries(
+    *,
+    source_mode: str,
+    file_list,
+    folder_path: str,
+) -> pd.DataFrame:
+    if source_mode == "Folder Berkas Lokal":
+        return _scan_folder_entries(
+            folder_path=folder_path,
+            is_index_source=True,
+        )
+    return _parse_uploaded_file_list(file_list)
 
 
 def _parse_uploaded_file_list(file_list) -> pd.DataFrame:

@@ -80,7 +80,9 @@ Proses ini hanya mencocokkan data Excel dengan daftar/path PDF. Tidak membaca is
 Input proses ini terpisah dari review isi berkas:
 
 - Excel daftar klaim untuk review jumlah berkas.
-- `list_berkas_klaim.txt` untuk review jumlah berkas.
+- Sumber data PDF, pilih salah satu:
+  - `list_berkas_klaim.txt`.
+  - Folder Berkas Lokal yang dapat diakses komputer/server aplikasi.
 
 Yang dicek:
 
@@ -147,7 +149,11 @@ Log Streamlit tersimpan di `.streamlit.log`. Log Cloudflare Tunnel tersimpan di 
 
 Catatan keamanan: tanpa Cloudflare Access, domain publik dapat dibuka siapa pun yang mengetahui URL. Untuk data pasien/berkas klaim nyata, aktifkan Cloudflare Zero Trust Access atau batasi akses jaringan sebelum dipakai operasional.
 
-## 4. Membuat `list_berkas_klaim.txt`
+## 4. Input PDF Untuk Review Jumlah Berkas
+
+Review jumlah berkas dapat memakai salah satu dari dua sumber data PDF.
+
+### Opsi A: `list_berkas_klaim.txt`
 
 Di komputer Windows yang menyimpan folder klaim, buka Command Prompt pada folder utama klaim atau gunakan path lengkap, lalu jalankan:
 
@@ -157,7 +163,15 @@ dir /s /b > list_berkas_klaim.txt
 
 Upload file `list_berkas_klaim.txt` ke aplikasi. File ini boleh berisi folder dan file lain; aplikasi hanya memakai baris yang berakhiran `.pdf`.
 
-Jika path di list berasal dari komputer Windows lain dan tidak bisa diakses dari komputer yang menjalankan aplikasi, upload PDF terkait atau isi folder PDF lokal supaya aplikasi bisa membaca isi PDF. Dalam kondisi itu, list tetap dipakai untuk matching dan folder tanggal.
+Gunakan opsi ini jika daftar file dibuat dari komputer lain atau user lebih mudah mengirim file TXT.
+
+### Opsi B: Folder Berkas Lokal
+
+Jika aplikasi berjalan di komputer/server yang bisa mengakses folder klaim langsung, pilih `Folder Berkas Lokal`, lalu isi path folder utama berkas klaim.
+
+Aplikasi akan mencari semua file `.pdf` di dalam folder tersebut secara rekursif sampai subfolder terdalam, lalu mencocokkan nomor SEP dari nama/path PDF dengan Excel daftar klaim.
+
+Jika path di list berasal dari komputer Windows lain dan tidak bisa diakses dari komputer yang menjalankan aplikasi, gunakan `Folder Berkas Lokal` pada komputer/server yang memiliki akses ke folder PDF tersebut.
 
 ## 5. Penjelasan Status
 
