@@ -19,6 +19,7 @@ from src.parser_file_list import (
     scan_pdf_folder,
 )
 from src.pdf_checker import check_pdf
+from src.pdf_parallel import automatic_pdf_worker_count, check_pdfs_parallel
 
 
 st.set_page_config(page_title=APP_NAME, layout="wide")
@@ -347,20 +348,31 @@ def _check_all_content_pdfs(
     if content_entries.empty:
         return {}
 
-    pdf_results: dict[str, object] = {}
     progress = st.progress(0)
     status = st.empty()
     total = len(content_entries)
+    worker_count = automatic_pdf_worker_count(total)
+    file_names_by_source_id = {
+        str(entry["source_id"]): str(entry["file_name"])
+        for _, entry in content_entries.iterrows()
+    }
 
-    for idx, (_, entry) in enumerate(content_entries.iterrows(), start=1):
-        status.text(f"Memeriksa PDF {idx}/{total}: {entry['file_name']}")
-        result = check_pdf(
-            source_id=str(entry["source_id"]),
-            local_path=str(entry["local_path"]),
-            config=config,
-        )
-        pdf_results[str(entry["source_id"])] = result
-        progress.progress(idx / total)
+    status.text(f"Memeriksa {total} PDF dengan {worker_count} worker...")
+
+    def update_progress(completed: int, total_items: int, source_id: str) -> None:
+        file_name = file_names_by_source_id.get(source_id, source_id)
+        status.text(f"Memeriksa PDF {completed}/{total_items}: {file_name}")
+        progress.progress(completed / total_items)
+
+    jobs = [
+        (str(entry["source_id"]), str(entry["local_path"]))
+        for _, entry in content_entries.iterrows()
+    ]
+    pdf_results = check_pdfs_parallel(
+        jobs,
+        config,
+        progress_callback=update_progress,
+    )
 
     status.empty()
     progress.empty()

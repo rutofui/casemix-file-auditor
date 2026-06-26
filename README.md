@@ -37,6 +37,32 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
+`install.bat` di Windows memakai `pip install --no-cache-dir` supaya cache download dependency tidak menambah ukuran folder.
+
+## 1.1. Menjaga Folder Project Tetap Ringan
+
+Folder `.venv` berisi dependency Python dan ukurannya jauh lebih besar daripada kode aplikasi. Folder ini boleh dihapus dan dibuat ulang kapan pun dengan `install.bat`.
+
+Saat menyimpan atau membagikan aplikasi, cukup sertakan:
+
+- `app.py`
+- `src/`
+- `requirements.txt`
+- `install.bat`
+- `run_app.bat`
+- `clean.bat`
+- `README.md`
+- `scripts/`
+- `tests/`
+
+File/folder seperti `.venv/`, `__pycache__/`, `*.pyc`, `.pytest_cache/`, log, dan hasil export Excel tidak perlu ikut dibagikan.
+
+Untuk membersihkan cache dan file generated lokal:
+
+```bat
+clean.bat
+```
+
 ## 2. Menjalankan Aplikasi
 
 ```bash
@@ -68,6 +94,8 @@ Output export: `hasil_review_jumlah_berkas.xlsx`.
 ### 2. Review Isi Berkas
 
 Proses ini membaca teks digital PDF dan mendeteksi apakah PDF juga memuat halaman/gambar hasil scan. Aplikasi tidak menjalankan OCR.
+
+Review isi berkas memproses beberapa PDF sekaligus secara otomatis dengan batas worker konservatif agar lebih cepat pada batch besar tanpa membebani komputer secara berlebihan.
 
 Input proses ini terpisah dari review jumlah berkas:
 

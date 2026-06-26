@@ -9,6 +9,7 @@ from src.config import PDFCheckConfig
 from src.matcher import build_file_review, build_pdf_content_review
 from src.parser_excel import read_claims_excel
 from src.parser_file_list import build_file_entry, parse_file_list_text
+from src.pdf_parallel import check_pdfs_parallel
 from src.pdf_checker import check_pdf
 
 
@@ -169,3 +170,34 @@ def test_content_review_requires_scan_image() -> None:
         assert review_df.loc[0, "Status Akhir"] == "Kurang Komponen"
         assert review_df.loc[0, "Hasil Scan Terdeteksi"] == "Tidak"
         assert "Hasil Scan Terdeteksi" in review_df.loc[0, "Catatan"]
+
+
+def test_parallel_pdf_check_matches_serial_results() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        sep_complete = "0132R0770526V001270"
+        sep_missing_scan = "0132R0770526V001271"
+        complete_pdf = root / f"{sep_complete}.pdf"
+        missing_scan_pdf = root / f"{sep_missing_scan}.pdf"
+        config = PDFCheckConfig()
+
+        _write_pdf(complete_pdf, _complete_claim_text(sep_complete), with_scan_image=True)
+        _write_pdf(missing_scan_pdf, _complete_claim_text(sep_missing_scan), with_scan_image=False)
+
+        jobs = [
+            ("complete", str(complete_pdf)),
+            ("missing_scan", str(missing_scan_pdf)),
+        ]
+        serial_results = {
+            source_id: check_pdf(source_id, local_path, config)
+            for source_id, local_path in jobs
+        }
+        parallel_results = check_pdfs_parallel(jobs, config)
+
+        assert set(parallel_results) == set(serial_results)
+        for source_id in serial_results:
+            assert parallel_results[source_id].readable == serial_results[source_id].readable
+            assert parallel_results[source_id].sep_values == serial_results[source_id].sep_values
+            assert parallel_results[source_id].lip_detected == serial_results[source_id].lip_detected
+            assert parallel_results[source_id].billing_detected == serial_results[source_id].billing_detected
+            assert parallel_results[source_id].scan_detected == serial_results[source_id].scan_detected
