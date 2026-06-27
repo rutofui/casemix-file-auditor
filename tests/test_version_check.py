@@ -51,13 +51,11 @@ def test_get_local_version_reads_build_info(tmp_path: Path, monkeypatch: pytest.
     assert version.built_at.endswith("+07:00")
 
 
-def test_fetch_remote_version_parses_github_payload() -> None:
+def test_fetch_remote_version_parses_build_info_payload() -> None:
     payload = {
-        "sha": "deadbeef1234567890",
-        "commit": {
-            "committer": {"date": "2026-06-27T08:00:00Z"},
-            "message": "Remote update",
-        },
+        "built_at": "2026-06-27T12:00:00+07:00",
+        "commit_sha": "deadbee",
+        "commit_message": "Remote update",
     }
     response = MagicMock()
     response.__enter__.return_value = response
@@ -69,6 +67,7 @@ def test_fetch_remote_version_parses_github_payload() -> None:
     assert version is not None
     assert version.commit_sha == "deadbee"
     assert version.commit_message == "Remote update"
+    assert version.source == "BUILD_INFO.json"
 
 
 def test_check_for_updates_detects_newer_remote(monkeypatch: pytest.MonkeyPatch) -> None:

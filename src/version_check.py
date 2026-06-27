@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 
 import certifi
 
-from src.config import GITHUB_API_URL
+from src.config import GITHUB_API_URL, GITHUB_BUILD_INFO_URL
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BUILD_INFO_PATH = PROJECT_ROOT / "BUILD_INFO.json"
@@ -93,6 +93,37 @@ def get_local_version() -> VersionInfo | None:
 
 
 def fetch_remote_version() -> VersionInfo | None:
+    build_info = _fetch_remote_build_info()
+    if build_info is not None:
+        return build_info
+    return _fetch_remote_version_from_api()
+
+
+def _fetch_remote_build_info() -> VersionInfo | None:
+    request = urllib.request.Request(
+        GITHUB_BUILD_INFO_URL,
+        headers={"User-Agent": "CasemixFileAuditor"},
+    )
+    try:
+        with _urlopen(request, timeout=15) as response:
+            payload = json.load(response)
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    built_at = str(payload.get("built_at", "")).strip()
+    if not built_at:
+        return None
+    return VersionInfo(
+        built_at=built_at,
+        commit_sha=str(payload.get("commit_sha", "")).strip(),
+        commit_message=str(payload.get("commit_message", "")).strip(),
+        source="BUILD_INFO.json",
+    )
+
+
+def _fetch_remote_version_from_api() -> VersionInfo | None:
     request = urllib.request.Request(
         GITHUB_API_URL,
         headers={
