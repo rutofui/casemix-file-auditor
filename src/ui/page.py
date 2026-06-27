@@ -7,6 +7,7 @@ from src.ui.content_review import render_content_review_tab
 from src.ui.file_review import render_file_review_tab
 from src.ui.layout import inject_layout_styles
 from src.ui.txt_analysis import render_txt_analysis_tab
+from src.ui.version_panel import render_version_panel
 
 
 def render_main_page() -> None:
@@ -14,6 +15,7 @@ def render_main_page() -> None:
     st.caption("Review lokal berkas klaim JKN sebelum pengajuan.")
 
     inject_layout_styles()
+    render_version_panel()
 
     tab_txt, tab_file, tab_content = st.tabs(
         [

@@ -1,0 +1,60 @@
+name: Release Metadata
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: write
+
+jobs:
+  update-build-info:
+    runs-on: ubuntu-latest
+    if: ${{ !startsWith(github.event.head_commit.message, 'chore: update BUILD_INFO.json') }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Write BUILD_INFO.json
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+          COMMIT_DATE: ${{ github.event.head_commit.timestamp }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          python <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          built_at = os.environ.get("COMMIT_DATE", "").strip()
+          if not built_at:
+              built_at = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
+
+          payload = {
+              "built_at": built_at,
+              "commit_sha": os.environ.get("COMMIT_SHA", "")[:7],
+              "commit_message": os.environ.get("COMMIT_MESSAGE", "").splitlines()[0][:200],
+          }
+          path = Path("BUILD_INFO.json")
+          existing = {}
+          if path.exists():
+              existing = json.loads(path.read_text(encoding="utf-8"))
+          if existing == payload:
+              print("BUILD_INFO.json already up to date.")
+          else:
+              path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+              print("Updated BUILD_INFO.json")
+          PY
+
+      - name: Commit BUILD_INFO.json if changed
+        run: |
+          if git diff --quiet BUILD_INFO.json; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add BUILD_INFO.json
+          git commit -m "chore: update BUILD_INFO.json"
+          git push

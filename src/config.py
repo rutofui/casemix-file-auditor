@@ -7,6 +7,10 @@ from typing import Iterable
 
 APP_NAME = "Casemix File Auditor"
 
+GITHUB_REPO = "rutofui/casemix-file-auditor"
+GITHUB_DEFAULT_BRANCH = "master"
+GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/commits/{GITHUB_DEFAULT_BRANCH}"
+
 SEP_REGEX = r"\d{4}R\d{3}\d{4}V\d{6}"
 SEP_PATTERN = re.compile(SEP_REGEX, re.IGNORECASE)
 

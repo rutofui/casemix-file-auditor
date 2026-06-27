@@ -1,8 +1,24 @@
 # Casemix File Auditor
 
-Aplikasi web lokal untuk membantu tim casemix rumah sakit mereview berkas klaim JKN sebelum diajukan. Aplikasi memisahkan dua proses kerja: review kelengkapan jumlah berkas dan review kelengkapan isi berkas.
+Aplikasi web lokal untuk membantu tim casemix rumah sakit mereview berkas klaim JKN sebelum diajukan. Aplikasi memisahkan tiga proses kerja: analisis TXT e-Klaim, review kelengkapan jumlah berkas, dan review kelengkapan isi berkas.
 
-Data diproses lokal di komputer/server internal. Aplikasi tidak memakai API eksternal dan tidak mengirim data pasien ke cloud.
+Data diproses lokal di komputer user. Data klaim pasien tidak dikirim ke cloud. Aplikasi hanya memeriksa metadata versi terbaru dari GitHub saat fitur cek pembaruan dijalankan.
+
+**Panduan instalasi lengkap untuk user:** [docs/INSTALASI.md](docs/INSTALASI.md)
+
+## Instalasi Cepat (Windows)
+
+Prasyarat: Python 3.11/3.12, Git for Windows.
+
+```bat
+cd /d D:\Casemix
+git clone https://github.com/rutofui/casemix-file-auditor.git
+cd casemix-file-auditor
+install.bat
+run_app.bat
+```
+
+Buka `http://localhost:8501`. Pembaruan aplikasi: gunakan tombol **Update** di dalam app atau jalankan `update.bat`.
 
 ## Struktur Project
 
@@ -20,6 +36,8 @@ src/
 ```
 
 ## 1. Install Dependency
+
+**Metode utama:** clone repository Git lalu jalankan `install.bat` (lihat [docs/INSTALASI.md](docs/INSTALASI.md)).
 
 Disarankan memakai virtual environment.
 
@@ -43,19 +61,9 @@ pip install -r requirements.txt
 
 Folder `.venv` berisi dependency Python dan ukurannya jauh lebih besar daripada kode aplikasi. Folder ini boleh dihapus dan dibuat ulang kapan pun dengan `install.bat`.
 
-Saat menyimpan atau membagikan aplikasi, cukup sertakan:
+Untuk pembaruan rutin, gunakan `update.bat` atau tombol **Update** di aplikasi (bukan copy folder manual).
 
-- `app.py`
-- `src/`
-- `requirements.txt`
-- `install.bat`
-- `run_app.bat`
-- `clean.bat`
-- `README.md`
-- `scripts/`
-- `tests/`
-
-File/folder seperti `.venv/`, `__pycache__/`, `*.pyc`, `.pytest_cache/`, log, dan hasil export Excel tidak perlu ikut dibagikan.
+File/folder seperti `.venv/`, `__pycache__/`, `*.pyc`, `.pytest_cache/`, log, dan hasil export Excel tidak perlu dibagikan ke user lain.
 
 Untuk membersihkan cache dan file generated lokal:
 

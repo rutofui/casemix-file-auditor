@@ -5,6 +5,11 @@ import time
 import streamlit as st
 
 from src.config import PDFCheckConfig
+from src.version_check import format_version_datetime as _format_version_datetime
+
+
+def format_version_datetime(value: str) -> str:
+    return _format_version_datetime(value)
 
 
 def format_elapsed(seconds: float) -> str:
