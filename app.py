@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 import tempfile
+import time
 import traceback
 
 import pandas as pd
 import streamlit as st
 
 from src.config import APP_NAME, CONTENT_REVIEW_COLUMNS, FILE_REVIEW_COLUMNS, PDFCheckConfig
+from src.config import OCR_CONTENT_REVIEW_COLUMNS
 from src.exporter import export_review_to_excel
 from src.matcher import build_file_review, build_pdf_content_review
 from src.parser_excel import read_claims_excel
@@ -19,10 +21,28 @@ from src.parser_file_list import (
     scan_pdf_folder,
 )
 from src.pdf_checker import check_pdf
-from src.pdf_parallel import automatic_pdf_worker_count, check_pdfs_parallel
+from src.pdf_parallel import resolve_pdf_worker_count, check_pdfs_parallel
 
 
 st.set_page_config(page_title=APP_NAME, layout="wide")
+
+
+def _format_elapsed(seconds: float) -> str:
+    total = max(0, int(seconds))
+    if total < 60:
+        return f"{total} detik"
+    minutes, secs = divmod(total, 60)
+    if minutes < 60:
+        return f"{minutes} menit {secs} detik"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours} jam {minutes} menit {secs} detik"
+
+
+def _refresh_duration_status(duration_status, started_at: float) -> None:
+    if duration_status is not None:
+        duration_status.info(
+            f"Durasi berjalan: {_format_elapsed(time.perf_counter() - started_at)}"
+        )
 
 
 def main() -> None:
@@ -95,6 +115,12 @@ def main() -> None:
             "Folder PDF lokal (opsional)",
             key="content_review_folder",
         )
+        content_scan_mode = st.radio(
+            "Mode scan isi PDF",
+            ["Tanpa OCR", "Dengan OCR"],
+            horizontal=True,
+            key="content_review_scan_mode",
+        )
         if st.button(
             "Jalankan Review Isi Berkas",
             width="stretch",
@@ -103,7 +129,9 @@ def main() -> None:
             _run_content_review(
                 uploaded_pdfs=content_uploaded_pdfs,
                 folder_path=content_folder_path,
-                config=_automatic_pdf_check_config(),
+                config=_automatic_pdf_check_config(
+                    use_ocr=content_scan_mode == "Dengan OCR",
+                ),
             )
         _render_content_panel()
 
@@ -157,10 +185,11 @@ def _render_panel_header(title: str, subtitle: str, class_name: str) -> None:
     )
 
 
-def _automatic_pdf_check_config() -> PDFCheckConfig:
+def _automatic_pdf_check_config(*, use_ocr: bool = False) -> PDFCheckConfig:
     return PDFCheckConfig(
         min_page_text_chars=40,
         min_pdf_text_chars=80,
+        use_ocr=use_ocr,
     )
 
 
@@ -182,6 +211,9 @@ def _run_file_review(
         return
 
     try:
+        started_at = time.perf_counter()
+        duration_status = st.empty()
+        duration_status.info(f"Durasi berjalan: {_format_elapsed(0)}")
         with st.spinner("Mengecek jumlah berkas..."):
             excel_result = read_claims_excel(excel_file)
             file_entries = _build_file_review_entries(
@@ -196,6 +228,9 @@ def _run_file_review(
                 folder_path=folder_path,
                 file_entries=file_entries,
             )
+            duration_status.info(
+                f"Durasi berjalan: {_format_elapsed(time.perf_counter() - started_at)}"
+            )
             review_df, orphan_df, summary = build_file_review(excel_result.df, file_entries)
             export_bytes = export_review_to_excel(
                 review_df,
@@ -204,12 +239,15 @@ def _run_file_review(
                 review_sheet_name="review_jumlah_berkas",
             )
 
+        elapsed = time.perf_counter() - started_at
+        duration_status.empty()
         st.session_state["file_review_df"] = review_df
         st.session_state["file_orphan_df"] = orphan_df
         st.session_state["file_summary"] = summary
         st.session_state["file_export_bytes"] = export_bytes
+        st.session_state["file_review_duration_sec"] = elapsed
         st.session_state["last_review_kind"] = "file"
-        st.success("Review jumlah berkas selesai.")
+        st.success(f"Review jumlah berkas selesai ({_format_elapsed(elapsed)}).")
     except Exception as exc:
         st.error(f"Review jumlah berkas gagal: {exc}")
         with st.expander("Detail teknis"):
@@ -227,6 +265,9 @@ def _run_content_review(
         return
 
     try:
+        started_at = time.perf_counter()
+        duration_status = st.empty()
+        duration_status.info(f"Durasi berjalan: {_format_elapsed(0)}")
         with st.spinner("Mengecek isi berkas PDF..."):
             with tempfile.TemporaryDirectory(prefix="casemix_claim_pdf_") as temp_dir:
                 upload_entries = _save_uploaded_pdfs(
@@ -240,15 +281,21 @@ def _run_content_review(
                 )
                 file_entries = combine_file_entries([upload_entries, folder_entries])
                 if file_entries.empty:
+                    duration_status.empty()
                     st.error("Tidak ada PDF yang bisa diperiksa dari input review isi berkas.")
                     return
-                pdf_results = _check_all_content_pdfs(
+                _refresh_duration_status(duration_status, started_at)
+                pdf_results, _ = _check_all_content_pdfs(
                     file_entries=file_entries,
                     config=config,
+                    started_at=started_at,
+                    duration_status=duration_status,
                 )
+                _refresh_duration_status(duration_status, started_at)
                 review_df, orphan_df, summary = build_pdf_content_review(
                     file_entries,
                     pdf_results,
+                    use_ocr=config.use_ocr,
                 )
                 export_bytes = export_review_to_excel(
                     review_df,
@@ -257,12 +304,16 @@ def _run_content_review(
                     review_sheet_name="review_isi_berkas",
                 )
 
+        elapsed = time.perf_counter() - started_at
+        duration_status.empty()
         st.session_state["content_review_df"] = review_df
         st.session_state["content_orphan_df"] = orphan_df
         st.session_state["content_summary"] = summary
         st.session_state["content_export_bytes"] = export_bytes
+        st.session_state["content_use_ocr"] = config.use_ocr
+        st.session_state["content_review_duration_sec"] = elapsed
         st.session_state["last_review_kind"] = "content"
-        st.success("Review isi berkas selesai.")
+        st.success(f"Review isi berkas selesai ({_format_elapsed(elapsed)}).")
     except Exception as exc:
         st.error(f"Review isi berkas gagal: {exc}")
         with st.expander("Detail teknis"):
@@ -391,32 +442,51 @@ def _check_all_content_pdfs(
     *,
     file_entries: pd.DataFrame,
     config: PDFCheckConfig,
-) -> dict[str, object]:
+    started_at: float | None = None,
+    duration_status=None,
+) -> tuple[dict[str, object], float]:
+    pdf_started_at = started_at if started_at is not None else time.perf_counter()
     if file_entries.empty:
-        return {}
+        return {}, 0.0
 
     content_entries = file_entries[
         file_entries["is_content_source"].astype(bool)
         & (file_entries["local_path"].astype(str) != "")
     ].copy()
     if content_entries.empty:
-        return {}
+        return {}, time.perf_counter() - pdf_started_at
 
     progress = st.progress(0)
     status = st.empty()
     total = len(content_entries)
-    worker_count = automatic_pdf_worker_count(total)
+    worker_count = resolve_pdf_worker_count(total, use_ocr=config.use_ocr)
     file_names_by_source_id = {
         str(entry["source_id"]): str(entry["file_name"])
         for _, entry in content_entries.iterrows()
     }
 
-    status.text(f"Memeriksa {total} PDF dengan {worker_count} worker...")
+    mode_label = "OCR" if config.use_ocr else "tanpa OCR"
+
+    def elapsed_label() -> str:
+        return _format_elapsed(time.perf_counter() - pdf_started_at)
+
+    def refresh_duration() -> None:
+        _refresh_duration_status(duration_status, pdf_started_at)
+
+    refresh_duration()
+    status.text(
+        f"Memeriksa {total} PDF {mode_label} dengan {worker_count} worker... "
+        f"· Durasi: {elapsed_label()}"
+    )
 
     def update_progress(completed: int, total_items: int, source_id: str) -> None:
         file_name = file_names_by_source_id.get(source_id, source_id)
-        status.text(f"Memeriksa PDF {completed}/{total_items}: {file_name}")
+        status.text(
+            f"Memeriksa PDF {completed}/{total_items}: {file_name} "
+            f"· Durasi: {elapsed_label()}"
+        )
         progress.progress(completed / total_items)
+        refresh_duration()
 
     jobs = [
         (str(entry["source_id"]), str(entry["local_path"]))
@@ -426,11 +496,16 @@ def _check_all_content_pdfs(
         jobs,
         config,
         progress_callback=update_progress,
+        tick_callback=refresh_duration if duration_status is not None else None,
     )
 
+    elapsed = time.perf_counter() - pdf_started_at
+    refresh_duration()
+    status.text(f"Pemeriksaan PDF selesai · Durasi: {elapsed_label()}")
+    progress.progress(1.0)
     status.empty()
     progress.empty()
-    return pdf_results
+    return pdf_results, elapsed
 
 
 def _one_content_source_per_sep(content_entries: pd.DataFrame) -> pd.DataFrame:
@@ -477,24 +552,27 @@ def _render_file_panel() -> None:
         export_file_name="hasil_review_jumlah_berkas.xlsx",
         orphan_title="PDF di folder/list tetapi tidak ada di Excel",
         widget_prefix="file_review",
+        duration_sec=st.session_state.get("file_review_duration_sec"),
     )
 
 
 def _render_content_panel() -> None:
     if st.session_state.get("content_review_df") is None:
         return
+    use_ocr = bool(st.session_state.get("content_use_ocr", False))
     st.subheader("Hasil Review Isi Berkas")
     _render_review_panel(
         review_df=st.session_state.get("content_review_df"),
         summary=st.session_state.get("content_summary"),
         orphan_df=st.session_state.get("content_orphan_df"),
         export_bytes=st.session_state.get("content_export_bytes"),
-        empty_columns=CONTENT_REVIEW_COLUMNS,
-        empty_summary=_empty_content_summary(),
+        empty_columns=OCR_CONTENT_REVIEW_COLUMNS if use_ocr else CONTENT_REVIEW_COLUMNS,
+        empty_summary=_empty_ocr_content_summary() if use_ocr else _empty_content_summary(),
         status_options=["Semua", "Lengkap", "Kurang Komponen", "Perlu Review Manual"],
-        export_file_name="hasil_review_isi_berkas.xlsx",
+        export_file_name="hasil_review_isi_berkas_ocr.xlsx" if use_ocr else "hasil_review_isi_berkas.xlsx",
         orphan_title="PDF di folder/list tetapi tidak ada di Excel",
         widget_prefix="content_review",
+        duration_sec=st.session_state.get("content_review_duration_sec"),
     )
 
 
@@ -510,12 +588,16 @@ def _render_review_panel(
     export_file_name: str,
     orphan_title: str,
     widget_prefix: str,
+    duration_sec: float | None = None,
 ) -> None:
     has_results = review_df is not None and summary is not None
     if not has_results:
         review_df = pd.DataFrame(columns=empty_columns)
         orphan_df = pd.DataFrame(columns=["No SEP", "Path File", "Tanggal Folder", "Sumber", "Catatan"])
         summary = empty_summary
+
+    if duration_sec is not None:
+        st.caption(f"Durasi review terakhir: **{_format_elapsed(duration_sec)}**")
 
     summary_items = list(summary.items())
     for start in range(0, len(summary_items), 4):
@@ -573,6 +655,24 @@ def _empty_content_summary() -> dict[str, int]:
         "LIP": 0,
         "Rincian tagihan": 0,
         "Hasil scan": 0,
+        "Kurang komponen": 0,
+        "Perlu review manual": 0,
+        "Isi lengkap": 0,
+    }
+
+
+def _empty_ocr_content_summary() -> dict[str, int]:
+    return {
+        "Total PDF": 0,
+        "PDF dibaca": 0,
+        "SEP cocok di PDF": 0,
+        "LIP": 0,
+        "Rincian tagihan": 0,
+        "Resume Medis": 0,
+        "Triage": 0,
+        "SPRI": 0,
+        "Hasil Pemeriksaan": 0,
+        "Radiologi": 0,
         "Kurang komponen": 0,
         "Perlu review manual": 0,
         "Isi lengkap": 0,

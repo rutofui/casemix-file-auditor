@@ -4,13 +4,22 @@ from pathlib import Path
 import tempfile
 
 import pandas as pd
+import pytest
 
 from src.config import PDFCheckConfig
 from src.matcher import build_file_review, build_pdf_content_review
 from src.parser_excel import read_claims_excel
 from src.parser_file_list import build_file_entry, parse_file_list_text, scan_pdf_folder
-from src.pdf_parallel import check_pdfs_parallel
+from src.pdf_parallel import (
+    MAX_OCR_PDF_WORKERS,
+    automatic_pdf_worker_count,
+    check_pdfs_parallel,
+    resolve_pdf_worker_count,
+)
+from src.config import detect_document_titles, detect_document_titles_from_pages
 from src.pdf_checker import check_pdf
+
+
 
 
 def _write_pdf(path: Path, text: str, *, with_scan_image: bool = False) -> None:
@@ -172,6 +181,21 @@ def test_content_review_requires_scan_image() -> None:
         assert "Hasil Scan Terdeteksi" in review_df.loc[0, "Catatan"]
 
 
+def test_ocr_mode_uses_automatic_worker_count() -> None:
+    total = 10
+    ocr_count = resolve_pdf_worker_count(total, use_ocr=True)
+    non_ocr_count = resolve_pdf_worker_count(total, use_ocr=False)
+    expected_non_ocr = automatic_pdf_worker_count(total)
+    expected_ocr = min(expected_non_ocr, MAX_OCR_PDF_WORKERS)
+
+    assert ocr_count == expected_ocr
+    assert non_ocr_count == expected_non_ocr
+    if expected_ocr > 1:
+        assert ocr_count > 1
+    if expected_non_ocr > MAX_OCR_PDF_WORKERS:
+        assert ocr_count == MAX_OCR_PDF_WORKERS
+
+
 def test_parallel_pdf_check_matches_serial_results() -> None:
     with tempfile.TemporaryDirectory() as temp_dir:
         root = Path(temp_dir)
@@ -254,3 +278,216 @@ def test_file_review_can_scan_local_folder_instead_of_txt_list() -> None:
         assert review_df.loc[1, "Status Akhir"] == "Kurang PDF"
         assert review_df.loc[2, "Status Akhir"] == "Salah Folder"
         assert orphan_df.empty
+
+
+def test_detect_document_titles_from_review_text() -> None:
+    text = "\n".join(
+        [
+            "RESUME MEDIS",
+            "SURAT PERINTAH RAWAT INAP",
+            "NOMOR SURAT: 0132R0770426K001487",
+            "MOHON PERAWATAN DAN PENANGANAN LEBIH LANJUT",
+            "HASIL PEMERIKSAAN RADIOLOGI",
+        ]
+    )
+
+    assert detect_document_titles(text) == [
+        "Resume Medis",
+        "Surat Perintah Rawat Inap",
+        "Hasil Pemeriksaan",
+        "Pemeriksaan Radiologi",
+    ]
+
+
+def test_spri_not_detected_from_generic_rawat_inap_text() -> None:
+    sep_text = "\n".join(
+        [
+            "SURAT ELIGIBILITAS PESERTA",
+            "JENIS RAWAT INAP",
+            "RUANG PERAWATAN",
+            "RESUME MEDIS RINGKASAN PULANG",
+        ]
+    )
+
+    assert "Surat Perintah Rawat Inap" not in detect_document_titles(sep_text)
+
+
+def test_spri_detected_from_form_title_and_token() -> None:
+    assert "Surat Perintah Rawat Inap" in detect_document_titles(
+        "FORMULIR SPRI NO 123\nNomor Surat: 001\nMohon perawatan pasien"
+    )
+    assert "Surat Perintah Rawat Inap" not in detect_document_titles("DOKUMEN SPRI PASIEN")
+    assert "Surat Perintah Rawat Inap" not in detect_document_titles("DESKRIPSI SPRINTER RUANGAN")
+
+
+def test_spri_not_detected_when_title_and_context_on_different_pages() -> None:
+    pages = [
+        "SURAT PERINTAH RAWAT INAP",
+        "NOMOR SURAT: 0132R0770426K001487 MOHON PERAWATAN PASIEN",
+        "SURAT ELIGIBILITAS PESERTA JENIS RAWAT INAP",
+    ]
+
+    assert "Surat Perintah Rawat Inap" not in detect_document_titles_from_pages(pages)
+
+
+def test_spri_detected_only_on_matching_page_in_multi_page_pdf() -> None:
+    pages = [
+        "SURAT ELIGIBILITAS PESERTA JENIS RAWAT INAP TANGGAL MASUK",
+        """
+        SURAT PERINTAH RAWAT INAP
+        Nomor Surat: 0132R0770426K001487
+        Mohon perawatan dan penanganan lebih lanjut untuk pasien dibawah ini:
+        """,
+        "RESUME MEDIS DPJP RAWAT INAP",
+    ]
+
+    titles = detect_document_titles_from_pages(pages)
+    assert "Surat Perintah Rawat Inap" in titles
+    assert "Resume Medis" in titles
+
+
+def test_spri_detected_from_scanned_form_ocr_text() -> None:
+    """Regression sample from RS DKH Sukatani SPRI scan (0132R0770426V001254)."""
+    ocr_text = """
+    RS DKH SUKATANI
+    BPJS Kesehatan
+    SURAT PERINTAH RAWAT INAP
+    Nomor Surat: 0132R0770426K001487
+    Mohon perawatan dan penanganan lebih lanjut untuk pasien dibawah ini:
+    Jenis Ruang: Medikal (Non Infeksi)
+    Rawat Inap untuk dirawat oleh:
+    DPJP Rawat Inap: dr. Selvi Destaria, Sp.A
+    Alasan Rawat Inap: demam tinggi + muntah berulang + dehidrasi sedang
+    """
+
+    titles = detect_document_titles(ocr_text)
+    assert "Surat Perintah Rawat Inap" in titles
+
+
+def test_spri_detected_from_header_only_ocr_crop() -> None:
+    from src.config import detect_document_titles_on_page
+
+    header_text = "RS CONTOH\nSURAT PERINTAH RAWAT INAP"
+    assert "Surat Perintah Rawat Inap" in detect_document_titles_on_page(
+        header_text,
+        header_only_ocr=True,
+    )
+    assert "Surat Perintah Rawat Inap" not in detect_document_titles_on_page(
+        header_text,
+        header_only_ocr=False,
+    )
+
+
+def test_ocr_defaults_use_small_model_and_header_crop() -> None:
+    config = PDFCheckConfig(use_ocr=True)
+    assert config.ocr_render_zoom == 1.5
+    assert config.ocr_crop_top_ratio == pytest.approx(1 / 3)
+    assert config.ocr_detection_model_name == "PP-OCRv6_small_det"
+    assert config.ocr_recognition_model_name == "PP-OCRv6_small_rec"
+
+
+def test_ocr_early_stop_skips_pages_after_all_titles_found() -> None:
+    """Pages after all 5 title categories are found in digital text should not be OCR'd."""
+    import fitz
+
+    all_titles_text = "\n".join([
+        "RESUME MEDIS ringkasan pulang",
+        "TRIAGE form triase",
+        "SURAT PERINTAH RAWAT INAP",
+        "Nomor Surat: ABC",
+        "Mohon perawatan lebih lanjut",
+        "HASIL PEMERIKSAAN LABORATORIUM",
+        "PEMERIKSAAN RADIOLOGI RONTGEN",
+    ])
+
+    with tempfile.TemporaryDirectory() as d:
+        pdf_path = Path(d) / "test_early_stop.pdf"
+        doc = fitz.open()
+        # page 0: digital text with all 5 title categories
+        page0 = doc.new_page()
+        page0.insert_text((50, 50), all_titles_text, fontsize=11)
+        # page 1: blank scan page (no digital text) — would need OCR
+        doc.new_page()
+        doc.save(str(pdf_path))
+        doc.close()
+
+        from unittest.mock import patch as mock_patch
+
+        ocr_calls: list[int] = []
+        page_counter = {"i": 0}
+
+        def counting_ocr(page, engine, config):  # noqa: ARG001
+            ocr_calls.append(page_counter["i"])
+            return ""
+
+        def counting_needs_ocr(page, text, config, has_scan):  # noqa: ARG001
+            from src.config import normalize_text as _norm
+            page_counter["i"] += 1
+            return len(_norm(text)) < config.min_page_text_chars
+
+        from src.config import PDFCheckConfig
+        from src.pdf_checker import check_pdf
+
+        with mock_patch("src.pdf_checker._ocr_page", side_effect=counting_ocr):
+            with mock_patch("src.pdf_checker._get_paddleocr_engine", return_value=object()):
+                with mock_patch("src.pdf_checker._page_needs_ocr", side_effect=counting_needs_ocr):
+                    cfg = PDFCheckConfig(use_ocr=True, min_page_text_chars=10)
+                    r = check_pdf("early_stop", str(pdf_path), cfg)
+
+        # Page 0 has digital text with all 5 titles → titles_found becomes full
+        # Page 1 is blank → needs OCR but must be skipped due to early stop
+        assert ocr_calls == [], (
+            f"Expected 0 OCR calls after all titles found on page 0, got {len(ocr_calls)} calls"
+        )
+        assert "Resume Medis" in r.document_titles
+        assert "Pemeriksaan Radiologi" in r.document_titles
+
+
+def test_content_review_columns_and_requirements_differ_for_ocr_mode() -> None:
+    sep = "0132R0770526V001270"
+    entry = build_file_entry(
+        f"{sep}.pdf",
+        local_path=f"C:\\dummy\\{sep}.pdf",
+        source="folder",
+        is_index_source=False,
+        is_content_source=True,
+    )
+    files = pd.DataFrame([entry])
+    pdf_result = {
+        "readable": True,
+        "sep_values": [sep],
+        "lip_detected": True,
+        "billing_detected": True,
+        "scan_detected": True,
+        "document_titles": [
+            "Resume Medis",
+            "Triage",
+            "Surat Perintah Rawat Inap",
+            "Hasil Pemeriksaan",
+            "Pemeriksaan Radiologi",
+        ],
+        "needs_manual_review": False,
+        "error": "",
+        "notes": [],
+    }
+    pdf_results = {entry["source_id"]: pdf_result}
+
+    non_ocr_df, _, non_ocr_summary = build_pdf_content_review(
+        files,
+        pdf_results,
+        use_ocr=False,
+    )
+    ocr_df, _, ocr_summary = build_pdf_content_review(
+        files,
+        pdf_results,
+        use_ocr=True,
+    )
+
+    assert "Hasil Scan Terdeteksi" in non_ocr_df.columns
+    assert "Resume Medis" not in non_ocr_df.columns
+    assert "Hasil Scan Terdeteksi" not in ocr_df.columns
+    assert "Resume Medis" in ocr_df.columns
+    assert non_ocr_df.loc[0, "Status Akhir"] == "Lengkap"
+    assert ocr_df.loc[0, "Status Akhir"] == "Lengkap"
+    assert non_ocr_summary["Hasil scan"] == 1
+    assert ocr_summary["Resume Medis"] == 1

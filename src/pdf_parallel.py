@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 import os
 import traceback
 from typing import Callable, Iterable
@@ -10,6 +10,7 @@ from .pdf_checker import PDFCheckResult, check_pdf
 
 
 MAX_AUTO_PDF_WORKERS = 4
+MAX_OCR_PDF_WORKERS = 2
 
 
 def automatic_pdf_worker_count(total_pdfs: int) -> int:
@@ -19,20 +20,33 @@ def automatic_pdf_worker_count(total_pdfs: int) -> int:
     return max(1, min(total_pdfs, max(cpu_count - 1, 1), MAX_AUTO_PDF_WORKERS))
 
 
+def resolve_pdf_worker_count(total_pdfs: int, *, use_ocr: bool) -> int:
+    worker_count = automatic_pdf_worker_count(total_pdfs)
+    if use_ocr:
+        return min(worker_count, MAX_OCR_PDF_WORKERS)
+    return worker_count
+
+
 def check_pdfs_parallel(
     jobs: Iterable[tuple[str, str]],
     config: PDFCheckConfig,
     *,
     progress_callback: Callable[[int, int, str], None] | None = None,
+    tick_callback: Callable[[], None] | None = None,
 ) -> dict[str, PDFCheckResult]:
     job_list = list(jobs)
     total = len(job_list)
     if total == 0:
         return {}
 
-    worker_count = automatic_pdf_worker_count(total)
+    worker_count = resolve_pdf_worker_count(total, use_ocr=config.use_ocr)
     if worker_count == 1:
-        return _check_pdfs_serial(job_list, config, progress_callback=progress_callback)
+        return _check_pdfs_serial(
+            job_list,
+            config,
+            progress_callback=progress_callback,
+            tick_callback=tick_callback,
+        )
 
     results: dict[str, PDFCheckResult] = {}
     with ProcessPoolExecutor(max_workers=worker_count) as executor:
@@ -40,19 +54,26 @@ def check_pdfs_parallel(
             executor.submit(_check_pdf_worker, source_id, local_path, config): (source_id, local_path)
             for source_id, local_path in job_list
         }
-        for completed, future in enumerate(as_completed(futures), start=1):
-            source_id, local_path = futures[future]
-            try:
-                result = future.result()
-            except Exception:
-                result = _failed_pdf_result(
-                    source_id,
-                    local_path,
-                    "PDF gagal diproses di worker paralel:\n" + traceback.format_exc(),
-                )
-            results[source_id] = result
-            if progress_callback is not None:
-                progress_callback(completed, total, source_id)
+        pending = set(futures.keys())
+        completed = 0
+        while pending:
+            done, pending = wait(pending, timeout=1.0, return_when=FIRST_COMPLETED)
+            if tick_callback is not None:
+                tick_callback()
+            for future in done:
+                completed += 1
+                source_id, local_path = futures[future]
+                try:
+                    result = future.result()
+                except Exception:
+                    result = _failed_pdf_result(
+                        source_id,
+                        local_path,
+                        "PDF gagal diproses di worker paralel:\n" + traceback.format_exc(),
+                    )
+                results[source_id] = result
+                if progress_callback is not None:
+                    progress_callback(completed, total, source_id)
     return results
 
 
@@ -61,10 +82,13 @@ def _check_pdfs_serial(
     config: PDFCheckConfig,
     *,
     progress_callback: Callable[[int, int, str], None] | None = None,
+    tick_callback: Callable[[], None] | None = None,
 ) -> dict[str, PDFCheckResult]:
     results: dict[str, PDFCheckResult] = {}
     total = len(jobs)
     for completed, (source_id, local_path) in enumerate(jobs, start=1):
+        if tick_callback is not None:
+            tick_callback()
         try:
             result = check_pdf(source_id=source_id, local_path=local_path, config=config)
         except Exception:

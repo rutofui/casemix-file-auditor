@@ -9,6 +9,8 @@ from .config import (
     CONTENT_REVIEW_COLUMNS,
     FILE_REVIEW_COLUMNS,
     NO,
+    OCR_CONTENT_REVIEW_COLUMNS,
+    OCR_REQUIRED_COMPONENTS,
     REQUIRED_COMPONENTS,
     REVIEW_COLUMNS,
     STATUS_DUPLIKAT,
@@ -89,6 +91,8 @@ def build_file_review(
 def build_pdf_content_review(
     file_entries_df: pd.DataFrame,
     pdf_results_by_source_id: dict[str, Any] | None = None,
+    *,
+    use_ocr: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, int]]:
     pdf_results_by_source_id = pdf_results_by_source_id or {}
     file_entries = file_entries_df.copy() if file_entries_df is not None else pd.DataFrame()
@@ -101,12 +105,14 @@ def build_pdf_content_review(
         _review_one_pdf_content(
             entry=entry,
             pdf_results_by_source_id=pdf_results_by_source_id,
+            use_ocr=use_ocr,
         )
         for _, entry in content_entries.iterrows()
     ]
-    review_df = pd.DataFrame(rows, columns=CONTENT_REVIEW_COLUMNS)
+    columns = OCR_CONTENT_REVIEW_COLUMNS if use_ocr else CONTENT_REVIEW_COLUMNS
+    review_df = pd.DataFrame(rows, columns=columns)
     orphan_df = pd.DataFrame(columns=["No SEP", "Path File", "Tanggal Folder", "Sumber", "Catatan"])
-    summary = build_content_summary(review_df, pd.DataFrame())
+    summary = build_content_summary(review_df, pd.DataFrame(), use_ocr=use_ocr)
     return review_df, orphan_df, summary
 
 
@@ -188,7 +194,14 @@ def build_file_summary(
     }
 
 
-def build_content_summary(review_df: pd.DataFrame, claims_df: pd.DataFrame) -> dict[str, int]:
+def build_content_summary(
+    review_df: pd.DataFrame,
+    claims_df: pd.DataFrame,
+    *,
+    use_ocr: bool = False,
+) -> dict[str, int]:
+    if use_ocr:
+        return build_ocr_content_summary(review_df)
     if review_df.empty:
         return {
             "Total PDF": 0,
@@ -208,6 +221,40 @@ def build_content_summary(review_df: pd.DataFrame, claims_df: pd.DataFrame) -> d
         "LIP": int((review_df["LIP Terdeteksi"] == YES).sum()),
         "Rincian tagihan": int((review_df["Rincian Tagihan Terdeteksi"] == YES).sum()),
         "Hasil scan": int((review_df["Hasil Scan Terdeteksi"] == YES).sum()),
+        "Kurang komponen": int((review_df["Status Akhir"] == STATUS_KURANG_KOMPONEN).sum()),
+        "Perlu review manual": int((review_df["Status Akhir"] == STATUS_REVIEW_MANUAL).sum()),
+        "Isi lengkap": int((review_df["Status Akhir"] == STATUS_LENGKAP).sum()),
+    }
+
+
+def build_ocr_content_summary(review_df: pd.DataFrame) -> dict[str, int]:
+    if review_df.empty:
+        return {
+            "Total PDF": 0,
+            "PDF dibaca": 0,
+            "SEP cocok di PDF": 0,
+            "LIP": 0,
+            "Rincian tagihan": 0,
+            "Resume Medis": 0,
+            "Triage": 0,
+            "SPRI": 0,
+            "Hasil Pemeriksaan": 0,
+            "Radiologi": 0,
+            "Kurang komponen": 0,
+            "Perlu review manual": 0,
+            "Isi lengkap": 0,
+        }
+    return {
+        "Total PDF": int(len(review_df)),
+        "PDF dibaca": int((review_df["PDF Dapat Dibaca"] == YES).sum()),
+        "SEP cocok di PDF": int((review_df["SEP Terdeteksi Dalam PDF"] == YES).sum()),
+        "LIP": int((review_df["LIP Terdeteksi"] == YES).sum()),
+        "Rincian tagihan": int((review_df["Rincian Tagihan Terdeteksi"] == YES).sum()),
+        "Resume Medis": int((review_df["Resume Medis"] == YES).sum()),
+        "Triage": int((review_df["Triage"] == YES).sum()),
+        "SPRI": int((review_df["Surat Perintah Rawat Inap"] == YES).sum()),
+        "Hasil Pemeriksaan": int((review_df["Hasil Pemeriksaan"] == YES).sum()),
+        "Radiologi": int((review_df["Pemeriksaan Radiologi"] == YES).sum()),
         "Kurang komponen": int((review_df["Status Akhir"] == STATUS_KURANG_KOMPONEN).sum()),
         "Perlu review manual": int((review_df["Status Akhir"] == STATUS_REVIEW_MANUAL).sum()),
         "Isi lengkap": int((review_df["Status Akhir"] == STATUS_LENGKAP).sum()),
@@ -251,6 +298,7 @@ def _review_one_pdf_content(
     *,
     entry: pd.Series,
     pdf_results_by_source_id: dict[str, Any],
+    use_ocr: bool,
 ) -> dict[str, object]:
     source_id = str(entry.get("source_id", ""))
     filename_sep = str(entry.get("no_sep", "") or "")
@@ -265,6 +313,12 @@ def _review_one_pdf_content(
         "LIP Terdeteksi": NO,
         "Rincian Tagihan Terdeteksi": NO,
         "Hasil Scan Terdeteksi": NO,
+        "Judul Berkas Terdeteksi": "",
+        "Resume Medis": NO,
+        "Triage": NO,
+        "Surat Perintah Rawat Inap": NO,
+        "Hasil Pemeriksaan": NO,
+        "Pemeriksaan Radiologi": NO,
         "Status Akhir": STATUS_REVIEW_MANUAL,
         "Catatan": "",
     }
@@ -285,6 +339,18 @@ def _review_one_pdf_content(
     row["Hasil Scan Terdeteksi"] = bool_to_ya_tidak(
         bool(_result_value(pdf_result, "scan_detected", False))
     )
+    row["Judul Berkas Terdeteksi"] = ", ".join(
+        _unique_non_empty(list(_result_value(pdf_result, "document_titles", []) or []))
+    )
+    detected_titles = set(_result_value(pdf_result, "document_titles", []) or [])
+    for title in [
+        "Resume Medis",
+        "Triage",
+        "Surat Perintah Rawat Inap",
+        "Hasil Pemeriksaan",
+        "Pemeriksaan Radiologi",
+    ]:
+        row[title] = bool_to_ya_tidak(title in detected_titles)
 
     if filename_sep and pdf_sep_values and filename_sep not in set(pdf_sep_values):
         notes.append("Nomor SEP pada nama file berbeda dengan SEP yang terdeteksi di isi PDF.")
@@ -296,7 +362,8 @@ def _review_one_pdf_content(
         if note:
             notes.append(str(note))
 
-    missing_components = [col for col in REQUIRED_COMPONENTS if row.get(col, NO) != YES]
+    required_components = OCR_REQUIRED_COMPONENTS if use_ocr else REQUIRED_COMPONENTS
+    missing_components = [col for col in required_components if row.get(col, NO) != YES]
     if _result_value(pdf_result, "needs_manual_review", False):
         final_status = STATUS_REVIEW_MANUAL
     elif missing_components:

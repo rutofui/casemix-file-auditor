@@ -35,6 +35,17 @@ REQUIRED_COMPONENTS = [
     "Hasil Scan Terdeteksi",
 ]
 
+OCR_REQUIRED_COMPONENTS = [
+    "SEP Terdeteksi Dalam PDF",
+    "LIP Terdeteksi",
+    "Rincian Tagihan Terdeteksi",
+    "Resume Medis",
+    "Triage",
+    "Surat Perintah Rawat Inap",
+    "Hasil Pemeriksaan",
+    "Pemeriksaan Radiologi",
+]
+
 REVIEW_COLUMNS = [
     "No SEP",
     "Tanggal Pulang",
@@ -50,6 +61,7 @@ REVIEW_COLUMNS = [
     "LIP Terdeteksi",
     "Rincian Tagihan Terdeteksi",
     "Hasil Scan Terdeteksi",
+    "Judul Berkas Terdeteksi",
     "Status Akhir",
     "Catatan",
 ]
@@ -78,6 +90,23 @@ CONTENT_REVIEW_COLUMNS = [
     "LIP Terdeteksi",
     "Rincian Tagihan Terdeteksi",
     "Hasil Scan Terdeteksi",
+    "Status Akhir",
+    "Catatan",
+]
+
+OCR_CONTENT_REVIEW_COLUMNS = [
+    "No SEP",
+    "Nama File",
+    "Path File",
+    "PDF Dapat Dibaca",
+    "SEP Terdeteksi Dalam PDF",
+    "LIP Terdeteksi",
+    "Rincian Tagihan Terdeteksi",
+    "Resume Medis",
+    "Triage",
+    "Surat Perintah Rawat Inap",
+    "Hasil Pemeriksaan",
+    "Pemeriksaan Radiologi",
     "Status Akhir",
     "Catatan",
 ]
@@ -122,11 +151,65 @@ BILLING_KEYWORDS = [
     "Fasilitas",
 ]
 
+DOCUMENT_TITLE_KEYWORDS = {
+    "Resume Medis": [
+        "Resume Medis",
+        "Ringkasan Pulang",
+        "Discharge Summary",
+    ],
+    "Triage": [
+        "Triage",
+        "Triase",
+        "Form Triage",
+        "Form Triase",
+    ],
+    "Surat Perintah Rawat Inap": [
+        "Surat Perintah Rawat Inap",
+        "Surat Perintah Masuk Rawat Inap",
+        "Formulir SPRI",
+        "Form SPRI",
+    ],
+    "Hasil Pemeriksaan": [
+        "Hasil Pemeriksaan",
+        "Pemeriksaan Laboratorium",
+        "Laboratorium",
+        "Patologi Klinik",
+    ],
+    "Pemeriksaan Radiologi": [
+        "Pemeriksaan Radiologi",
+        "Radiologi",
+        "Hasil Radiologi",
+        "Rontgen",
+        "USG",
+        "CT Scan",
+        "MRI",
+    ],
+}
+
+SPRI_TITLE_PHRASES = list(DOCUMENT_TITLE_KEYWORDS["Surat Perintah Rawat Inap"])
+
+SPRI_CONTEXT_PHRASES = [
+    "Nomor Surat",
+    "Mohon perawatan",
+    "Tanggal Masuk",
+    "Jenis Ruang",
+    "DPJP Rawat Inap",
+    "Alasan Rawat Inap",
+]
+
+SPRI_HEADER_CHAR_LIMIT = 700
+
+
 @dataclass(frozen=True)
 class PDFCheckConfig:
     min_page_text_chars: int = 40
     min_pdf_text_chars: int = 80
     min_scan_image_area_ratio: float = 0.18
+    use_ocr: bool = False
+    ocr_render_zoom: float = 1.5
+    ocr_crop_top_ratio: float = 1 / 3
+    ocr_detection_model_name: str = "PP-OCRv6_small_det"
+    ocr_recognition_model_name: str = "PP-OCRv6_small_rec"
 
 
 def normalize_sep(value: object) -> str:
@@ -162,6 +245,75 @@ def normalize_text(text: object) -> str:
 def contains_keyword(text: str, keywords: Iterable[str]) -> bool:
     normalized = normalize_text(text)
     return any(normalize_text(keyword) in normalized for keyword in keywords)
+
+
+def contains_whole_word(text: str, word: str) -> bool:
+    token = normalize_text(word)
+    if not token:
+        return False
+    pattern = rf"(?<![A-Z0-9]){re.escape(token)}(?![A-Z0-9])"
+    return re.search(pattern, normalize_text(text)) is not None
+
+
+def document_title_keyword_match(normalized: str, keyword: str) -> bool:
+    token = normalize_text(keyword)
+    if not token:
+        return False
+    if " " in token or len(token) > 4:
+        return token in normalized
+    return contains_whole_word(normalized, token)
+
+
+def spri_title_in_header(normalized: str) -> bool:
+    header = normalized[:SPRI_HEADER_CHAR_LIMIT]
+    if any(document_title_keyword_match(header, phrase) for phrase in SPRI_TITLE_PHRASES):
+        return True
+    return contains_whole_word(header, "SPRI") and (
+        "FORMULIR SPRI" in header or "FORM SPRI" in header
+    )
+
+
+def spri_detected_on_page(page_text: str, *, header_only_ocr: bool = False) -> bool:
+    normalized = normalize_text(page_text)
+    if not spri_title_in_header(normalized):
+        return False
+    if header_only_ocr:
+        return True
+    return any(normalize_text(phrase) in normalized for phrase in SPRI_CONTEXT_PHRASES)
+
+
+def detect_document_titles_on_page(page_text: str, *, header_only_ocr: bool = False) -> list[str]:
+    normalized = normalize_text(page_text)
+    titles: list[str] = []
+    for title, keywords in DOCUMENT_TITLE_KEYWORDS.items():
+        if title == "Surat Perintah Rawat Inap":
+            if spri_detected_on_page(page_text, header_only_ocr=header_only_ocr):
+                titles.append(title)
+            continue
+        if any(document_title_keyword_match(normalized, keyword) for keyword in keywords):
+            titles.append(title)
+    return titles
+
+
+def detect_document_titles_from_pages(
+    page_texts: Iterable[str],
+    *,
+    header_only_ocr_pages: Iterable[bool] | None = None,
+) -> list[str]:
+    pages = list(page_texts)
+    flags = list(header_only_ocr_pages) if header_only_ocr_pages is not None else [False] * len(pages)
+    if len(flags) != len(pages):
+        flags = [False] * len(pages)
+    detected: set[str] = set()
+    for page_text, header_only_ocr in zip(pages, flags):
+        detected.update(
+            detect_document_titles_on_page(page_text, header_only_ocr=header_only_ocr)
+        )
+    return [title for title in DOCUMENT_TITLE_KEYWORDS if title in detected]
+
+
+def detect_document_titles(text: str) -> list[str]:
+    return detect_document_titles_on_page(text)
 
 
 def bool_to_ya_tidak(value: bool) -> str:

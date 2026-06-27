@@ -97,7 +97,14 @@ Output export: `hasil_review_jumlah_berkas.xlsx`.
 
 Proses ini membaca teks digital PDF dan mendeteksi apakah PDF juga memuat halaman/gambar hasil scan. Aplikasi tidak menjalankan OCR.
 
-Review isi berkas memproses beberapa PDF sekaligus secara otomatis dengan batas worker konservatif agar lebih cepat pada batch besar tanpa membebani komputer secara berlebihan.
+Review isi berkas memproses beberapa PDF sekaligus secara otomatis dengan batas worker konservatif (maks. 4 worker tanpa OCR, maks. 2 worker dengan OCR) agar lebih cepat pada batch besar tanpa membebani komputer secara berlebihan.
+
+Mode scan isi PDF:
+
+- `Tanpa OCR`: mode cepat seperti sebelumnya. Komponen yang dicek adalah SEP, LIP, Rincian Tagihan, dan Hasil Scan.
+- `Dengan OCR`: aplikasi memakai PaddleOCR 3.x (model **PP-OCRv6_small**) hanya pada bagian **1/3 atas** halaman scan tanpa teks digital, untuk mendeteksi judul Resume Medis, Triage, Surat Perintah Rawat Inap, Hasil Pemeriksaan, dan Pemeriksaan Radiologi. OCR berhenti lebih awal jika semua judul sudah terdeteksi.
+
+Pada mode OCR, halaman yang teks digitalnya sudah terbaca tidak diproses OCR. OCR membutuhkan dependency lebih besar (`paddlepaddle` >= 3.3 dan `paddleocr` >= 3.7) dan proses pertama kali bisa lebih lama karena model OCR perlu diunduh/disiapkan. Untuk batch OCR di mesin RAM terbatas, kurangi jumlah PDF sekaligus atau tutup aplikasi lain.
 
 Input proses ini terpisah dari review jumlah berkas:
 
@@ -184,12 +191,23 @@ Jika path di list berasal dari komputer Windows lain dan tidak bisa diakses dari
 
 Pada tab `Review Jumlah Berkas`, status `Lengkap` berarti jumlah/path PDF sudah sesuai. Pada tab `Review Isi Berkas`, status `Lengkap` berarti komponen wajib di dalam PDF terdeteksi lengkap.
 
-Komponen PDF yang dicek:
+Komponen PDF yang dicek tanpa OCR:
 
 - SEP
 - LIP / Berkas Klaim Individual Pasien
 - Rincian Tagihan
 - Hasil Scan
+
+Komponen PDF yang dicek dengan OCR:
+
+- SEP
+- LIP / Berkas Klaim Individual Pasien
+- Rincian Tagihan
+- Resume Medis
+- Triage
+- Surat Perintah Rawat Inap
+- Hasil Pemeriksaan
+- Pemeriksaan Radiologi
 
 ## 6. Keterbatasan
 
