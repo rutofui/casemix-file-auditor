@@ -4,11 +4,14 @@ from dataclasses import dataclass
 from datetime import datetime
 import json
 import platform
+import ssl
 import subprocess
 from pathlib import Path
 import urllib.error
 import urllib.request
 from zoneinfo import ZoneInfo
+
+import certifi
 
 from src.config import GITHUB_API_URL
 
@@ -98,7 +101,7 @@ def fetch_remote_version() -> VersionInfo | None:
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=15) as response:
+        with _urlopen(request, timeout=15) as response:
             payload = json.load(response)
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
         return None
@@ -215,3 +218,8 @@ def format_version_datetime(value: str) -> str:
     except ValueError:
         return value
     return parsed.strftime("%d %b %Y %H:%M WIB")
+
+
+def _urlopen(request: urllib.request.Request, *, timeout: int):
+    context = ssl.create_default_context(cafile=certifi.where())
+    return urllib.request.urlopen(request, timeout=timeout, context=context)

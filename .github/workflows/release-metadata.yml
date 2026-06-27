@@ -10,41 +10,34 @@ permissions:
 jobs:
   update-build-info:
     runs-on: ubuntu-latest
-    if: ${{ !startsWith(github.event.head_commit.message, 'chore: update BUILD_INFO.json') }}
+    if: ${{ !contains(github.event.head_commit.message, 'chore: update BUILD_INFO.json') }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Write BUILD_INFO.json
-        env:
-          COMMIT_SHA: ${{ github.sha }}
-          COMMIT_DATE: ${{ github.event.head_commit.timestamp }}
-          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
-          python <<'PY'
+          python3 <<'PY'
           import json
-          import os
+          import subprocess
           from pathlib import Path
 
-          built_at = os.environ.get("COMMIT_DATE", "").strip()
-          if not built_at:
-              built_at = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
-
+          built_at = subprocess.check_output(["git", "log", "-1", "--format=%cI"], text=True).strip()
+          commit_sha = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True).strip()
+          commit_message = subprocess.check_output(["git", "log", "-1", "--format=%s"], text=True).strip()[:200]
           payload = {
               "built_at": built_at,
-              "commit_sha": os.environ.get("COMMIT_SHA", "")[:7],
-              "commit_message": os.environ.get("COMMIT_MESSAGE", "").splitlines()[0][:200],
+              "commit_sha": commit_sha,
+              "commit_message": commit_message,
           }
           path = Path("BUILD_INFO.json")
-          existing = {}
-          if path.exists():
-              existing = json.loads(path.read_text(encoding="utf-8"))
-          if existing == payload:
-              print("BUILD_INFO.json already up to date.")
-          else:
+          existing = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+          if existing != payload:
               path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
               print("Updated BUILD_INFO.json")
+          else:
+              print("BUILD_INFO.json already up to date.")
           PY
 
       - name: Commit BUILD_INFO.json if changed

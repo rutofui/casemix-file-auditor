@@ -63,7 +63,7 @@ def test_fetch_remote_version_parses_github_payload() -> None:
     response.__enter__.return_value = response
     response.read = MagicMock(return_value=json.dumps(payload).encode("utf-8"))
 
-    with patch("src.version_check.urllib.request.urlopen", return_value=response):
+    with patch("src.version_check._urlopen", return_value=response):
         version = fetch_remote_version()
 
     assert version is not None
