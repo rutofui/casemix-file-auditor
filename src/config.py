@@ -46,26 +46,6 @@ OCR_REQUIRED_COMPONENTS = [
     "Pemeriksaan Radiologi",
 ]
 
-REVIEW_COLUMNS = [
-    "No SEP",
-    "Tanggal Pulang",
-    "No RM",
-    "Nama Pasien",
-    "Diagnosa",
-    "Status File",
-    "Path File",
-    "Tanggal Folder",
-    "Status Folder",
-    "Duplikat",
-    "SEP Terdeteksi Dalam PDF",
-    "LIP Terdeteksi",
-    "Rincian Tagihan Terdeteksi",
-    "Hasil Scan Terdeteksi",
-    "Judul Berkas Terdeteksi",
-    "Status Akhir",
-    "Catatan",
-]
-
 FILE_REVIEW_COLUMNS = [
     "No SEP",
     "Tanggal Pulang",

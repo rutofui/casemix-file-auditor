@@ -12,7 +12,6 @@ from .config import (
     OCR_CONTENT_REVIEW_COLUMNS,
     OCR_REQUIRED_COMPONENTS,
     REQUIRED_COMPONENTS,
-    REVIEW_COLUMNS,
     STATUS_DUPLIKAT,
     STATUS_FILE_ADA,
     STATUS_FILE_BELUM_ADA,
@@ -28,41 +27,6 @@ from .config import (
     YES,
     bool_to_ya_tidak,
 )
-
-
-def build_review(
-    claims_df: pd.DataFrame,
-    file_entries_df: pd.DataFrame,
-    pdf_results_by_source_id: dict[str, Any] | None = None,
-) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, int]]:
-    pdf_results_by_source_id = pdf_results_by_source_id or {}
-    file_entries = file_entries_df.copy() if file_entries_df is not None else pd.DataFrame()
-    if file_entries.empty:
-        index_entries = file_entries
-        content_entries = file_entries
-    else:
-        index_entries = file_entries[file_entries["is_index_source"].astype(bool)].copy()
-        content_entries = file_entries[file_entries["is_content_source"].astype(bool)].copy()
-
-    valid_claim_seps = set(
-        claims_df.loc[claims_df["_sep_valid"].astype(bool), "_no_sep_normalized"].dropna().astype(str)
-    )
-    review_rows: list[dict[str, object]] = []
-
-    for _, claim in claims_df.iterrows():
-        review_rows.append(
-            _review_one_claim(
-                claim=claim,
-                index_entries=index_entries,
-                content_entries=content_entries,
-                pdf_results_by_source_id=pdf_results_by_source_id,
-            )
-        )
-
-    review_df = pd.DataFrame(review_rows, columns=REVIEW_COLUMNS)
-    orphan_df = build_orphan_pdf_table(index_entries, valid_claim_seps)
-    summary = build_summary(review_df, claims_df)
-    return review_df, orphan_df, summary
 
 
 def build_file_review(
@@ -139,31 +103,6 @@ def build_orphan_pdf_table(index_entries: pd.DataFrame, valid_claim_seps: set[st
             }
         )
     return pd.DataFrame(rows, columns=columns)
-
-
-def build_summary(review_df: pd.DataFrame, claims_df: pd.DataFrame) -> dict[str, int]:
-    if review_df.empty:
-        return {
-            "Total klaim": 0,
-            "Total SEP valid": 0,
-            "Total PDF ditemukan": 0,
-            "Total klaim belum ada PDF": 0,
-            "Total salah folder": 0,
-            "Total duplikat": 0,
-            "Total kurang komponen": 0,
-            "Total lengkap": 0,
-        }
-
-    return {
-        "Total klaim": int(len(review_df)),
-        "Total SEP valid": int(claims_df["_sep_valid"].astype(bool).sum()),
-        "Total PDF ditemukan": int((review_df["Status File"] == STATUS_FILE_ADA).sum()),
-        "Total klaim belum ada PDF": int((review_df["Status File"] == STATUS_FILE_BELUM_ADA).sum()),
-        "Total salah folder": int((review_df["Status Folder"] == STATUS_FOLDER_SALAH).sum()),
-        "Total duplikat": int((review_df["Duplikat"] == YES).sum()),
-        "Total kurang komponen": int((review_df["Status Akhir"] == STATUS_KURANG_KOMPONEN).sum()),
-        "Total lengkap": int((review_df["Status Akhir"] == STATUS_LENGKAP).sum()),
-    }
 
 
 def build_file_summary(
@@ -419,127 +358,6 @@ def _apply_file_match(
         notes.append(folder_note)
 
 
-def _review_one_claim(
-    *,
-    claim: pd.Series,
-    index_entries: pd.DataFrame,
-    content_entries: pd.DataFrame,
-    pdf_results_by_source_id: dict[str, Any],
-) -> dict[str, object]:
-    sep = str(claim.get("_no_sep_normalized", "") or "")
-    sep_valid = bool(claim.get("_sep_valid", False))
-    notes: list[str] = []
-
-    base = {
-        "No SEP": sep or str(claim.get("No SEP", "") or ""),
-        "Tanggal Pulang": claim.get("Tanggal Pulang", ""),
-        "No RM": claim.get("No RM", ""),
-        "Nama Pasien": claim.get("Nama Pasien", ""),
-        "Diagnosa": claim.get("Diagnosa", ""),
-        "Status File": STATUS_FILE_BELUM_ADA,
-        "Path File": "",
-        "Tanggal Folder": "",
-        "Status Folder": STATUS_FOLDER_TIDAK_ADA_FILE,
-        "Duplikat": NO,
-        "SEP Terdeteksi Dalam PDF": NO,
-        "LIP Terdeteksi": NO,
-        "Rincian Tagihan Terdeteksi": NO,
-        "Hasil Scan Terdeteksi": NO,
-        "Status Akhir": STATUS_KURANG_PDF,
-        "Catatan": "",
-    }
-
-    if not sep_valid:
-        base["Status Akhir"] = STATUS_REVIEW_MANUAL
-        base["Catatan"] = "No SEP kosong atau format SEP tidak valid."
-        return base
-
-    matched_index = index_entries[index_entries["no_sep"] == sep] if not index_entries.empty else index_entries
-    if matched_index.empty:
-        base["Status Akhir"] = STATUS_KURANG_PDF
-        base["Catatan"] = "File PDF untuk SEP ini belum ditemukan."
-        return base
-
-    base["Status File"] = STATUS_FILE_ADA
-    paths = _unique_non_empty(matched_index["display_path"].tolist())
-    base["Path File"] = " | ".join(paths)
-    unique_pdf_paths = set(paths)
-    duplicate = len(unique_pdf_paths) > 1
-    base["Duplikat"] = YES if duplicate else NO
-    if duplicate:
-        notes.append(f"Ditemukan {len(unique_pdf_paths)} file PDF untuk SEP ini.")
-
-    folder_dates = _unique_non_empty(matched_index["tanggal_folder"].tolist())
-    base["Tanggal Folder"] = ", ".join(folder_dates)
-    folder_status, folder_note = _folder_status(
-        tanggal_pulang=claim.get("Tanggal Pulang", ""),
-        matched_index=matched_index,
-    )
-    base["Status Folder"] = folder_status
-    if folder_note:
-        notes.append(folder_note)
-
-    matched_content = (
-        content_entries[content_entries["no_sep"] == sep] if not content_entries.empty else content_entries
-    )
-    pdf_result = _pick_pdf_result(matched_content, pdf_results_by_source_id)
-    if pdf_result is None:
-        notes.append(
-            "Isi PDF belum dapat diperiksa. Upload PDF atau pilih folder lokal yang berisi PDF."
-        )
-    else:
-        _apply_pdf_result(base, sep, pdf_result, notes)
-
-    missing_components = [
-        col for col in REQUIRED_COMPONENTS if base.get(col, NO) != YES
-    ]
-
-    if duplicate:
-        final_status = STATUS_DUPLIKAT
-    elif folder_status == STATUS_FOLDER_SALAH:
-        final_status = STATUS_SALAH_FOLDER
-    elif pdf_result is None or _result_value(pdf_result, "needs_manual_review", False):
-        final_status = STATUS_REVIEW_MANUAL
-    elif folder_status == STATUS_FOLDER_TIDAK_TERDETEKSI:
-        final_status = STATUS_REVIEW_MANUAL
-    elif missing_components:
-        final_status = STATUS_KURANG_KOMPONEN
-        notes.append("Komponen belum terdeteksi: " + ", ".join(missing_components))
-    else:
-        final_status = STATUS_LENGKAP
-
-    base["Status Akhir"] = final_status
-    base["Catatan"] = " ".join(_unique_non_empty(notes))
-    return base
-
-
-def _apply_pdf_result(
-    row: dict[str, object],
-    expected_sep: str,
-    pdf_result: Any,
-    notes: list[str],
-) -> None:
-    sep_values = set(_result_value(pdf_result, "sep_values", []) or [])
-    sep_detected = expected_sep in sep_values
-    row["SEP Terdeteksi Dalam PDF"] = bool_to_ya_tidak(sep_detected)
-    row["LIP Terdeteksi"] = bool_to_ya_tidak(bool(_result_value(pdf_result, "lip_detected", False)))
-    row["Rincian Tagihan Terdeteksi"] = bool_to_ya_tidak(
-        bool(_result_value(pdf_result, "billing_detected", False))
-    )
-    row["Hasil Scan Terdeteksi"] = bool_to_ya_tidak(
-        bool(_result_value(pdf_result, "scan_detected", False))
-    )
-
-    if sep_values and expected_sep not in sep_values:
-        notes.append("Nomor SEP di PDF berbeda/tidak cocok dengan Excel.")
-    error = _result_value(pdf_result, "error", "")
-    if error:
-        notes.append(str(error))
-    for note in _result_value(pdf_result, "notes", []) or []:
-        if note:
-            notes.append(str(note))
-
-
 def _folder_status(tanggal_pulang: object, matched_index: pd.DataFrame) -> tuple[str, str]:
     expected_day = _day_from_date_value(tanggal_pulang)
     if not expected_day:
@@ -570,24 +388,6 @@ def _day_from_date_value(value: object) -> str:
     if pd.isna(parsed):
         return ""
     return f"{int(parsed.day):02d}"
-
-
-def _pick_pdf_result(content_entries: pd.DataFrame, pdf_results_by_source_id: dict[str, Any]) -> Any | None:
-    if content_entries is None or content_entries.empty:
-        return None
-
-    for _, entry in content_entries.iterrows():
-        source_id = str(entry.get("source_id", ""))
-        result = pdf_results_by_source_id.get(source_id)
-        if result is not None and not _result_value(result, "error", ""):
-            return result
-
-    for _, entry in content_entries.iterrows():
-        source_id = str(entry.get("source_id", ""))
-        result = pdf_results_by_source_id.get(source_id)
-        if result is not None:
-            return result
-    return None
 
 
 def _result_value(result: Any, key: str, default: Any = None) -> Any:

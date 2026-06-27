@@ -40,12 +40,12 @@ def export_review_to_excel(
 
         workbook = writer.book
         for worksheet in workbook.worksheets:
-            _format_worksheet(worksheet)
+            format_worksheet(worksheet)
 
     return output.getvalue()
 
 
-def _format_worksheet(worksheet) -> None:
+def format_worksheet(worksheet) -> None:
     header_fill = PatternFill("solid", fgColor="1F4E78")
     header_font = Font(color="FFFFFF", bold=True)
     for cell in worksheet[1]:
