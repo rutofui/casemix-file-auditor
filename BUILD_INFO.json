@@ -1,5 +1,5 @@
 {
-  "built_at": "2026-06-27T15:28:47+07:00",
-  "commit_sha": "7ab0237",
-  "commit_message": "fix: simplify release-metadata workflow with dedicated script"
+  "built_at": "2026-06-27T15:30:52+07:00",
+  "commit_sha": "453eed5",
+  "commit_message": "fix: compare remote version using BUILD_INFO.json"
 }
