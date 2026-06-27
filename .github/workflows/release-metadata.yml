@@ -2,7 +2,8 @@ name: Release Metadata
 
 on:
   push:
-    branches: [master]
+    branches:
+      - master
 
 permissions:
   contents: write
@@ -10,35 +11,13 @@ permissions:
 jobs:
   update-build-info:
     runs-on: ubuntu-latest
-    if: ${{ !contains(github.event.head_commit.message, 'chore: update BUILD_INFO.json') }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Write BUILD_INFO.json
-        run: |
-          python3 <<'PY'
-          import json
-          import subprocess
-          from pathlib import Path
-
-          built_at = subprocess.check_output(["git", "log", "-1", "--format=%cI"], text=True).strip()
-          commit_sha = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True).strip()
-          commit_message = subprocess.check_output(["git", "log", "-1", "--format=%s"], text=True).strip()[:200]
-          payload = {
-              "built_at": built_at,
-              "commit_sha": commit_sha,
-              "commit_message": commit_message,
-          }
-          path = Path("BUILD_INFO.json")
-          existing = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-          if existing != payload:
-              path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-              print("Updated BUILD_INFO.json")
-          else:
-              print("BUILD_INFO.json already up to date.")
-          PY
+        run: python3 scripts/write_build_info.py
 
       - name: Commit BUILD_INFO.json if changed
         run: |
