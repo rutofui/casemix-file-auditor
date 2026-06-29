@@ -1,5 +1,5 @@
 {
-  "built_at": "2026-06-29T19:18:40+07:00",
-  "commit_sha": "dc5621b",
-  "commit_message": "fix: address code review findings — PDF OCR logic, formatting, and security"
+  "built_at": "2026-06-29T19:35:14+07:00",
+  "commit_sha": "a4ce64b",
+  "commit_message": "feat(ui): polish layout — consistent buttons, metric cards, CSS, and result headers"
 }
