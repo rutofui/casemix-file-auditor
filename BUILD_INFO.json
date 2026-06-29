@@ -1,5 +1,5 @@
 {
-  "built_at": "2026-06-27T15:30:52+07:00",
-  "commit_sha": "453eed5",
-  "commit_message": "fix: compare remote version using BUILD_INFO.json"
+  "built_at": "2026-06-29T19:18:40+07:00",
+  "commit_sha": "dc5621b",
+  "commit_message": "fix: address code review findings — PDF OCR logic, formatting, and security"
 }
