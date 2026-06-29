@@ -192,6 +192,7 @@ class PDFCheckConfig:
     min_page_text_chars: int = 40
     min_pdf_text_chars: int = 80
     min_scan_image_area_ratio: float = 0.18
+    min_scan_fallback_image_area_ratio: float = 0.04
     use_ocr: bool = False
     ocr_render_zoom: float = 1.5
     ocr_crop_top_ratio: float = 1 / 3

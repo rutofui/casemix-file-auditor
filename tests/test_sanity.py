@@ -181,6 +181,29 @@ def test_content_review_requires_scan_image() -> None:
         assert "Hasil Scan Terdeteksi" in review_df.loc[0, "Catatan"]
 
 
+def test_small_logo_image_is_not_treated_as_scan() -> None:
+    import fitz
+    from PIL import Image
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        pdf_path = root / "small_logo.pdf"
+        image_path = root / "logo.png"
+        Image.new("RGB", (120, 120), "white").save(image_path)
+
+        doc = fitz.open()
+        page = doc.new_page(width=595, height=842)
+        page.insert_text((72, 72), "SEP", fontsize=10)
+        page.insert_image(fitz.Rect(72, 96, 132, 156), filename=str(image_path))
+        doc.save(str(pdf_path))
+        doc.close()
+
+        result = check_pdf("small_logo", str(pdf_path), PDFCheckConfig())
+
+    assert result.scan_detected is False
+    assert result.scan_page_count == 0
+
+
 def test_ocr_mode_uses_automatic_worker_count() -> None:
     total = 10
     ocr_count = resolve_pdf_worker_count(total, use_ocr=True)

@@ -205,9 +205,8 @@ def _page_has_scan(page: object, page_text: str, config: PDFCheckConfig) -> bool
     if image_ratio >= config.min_scan_image_area_ratio:
         return True
 
-    has_images = bool(image_infos)
     has_minimal_text = len((page_text or "").strip()) < config.min_page_text_chars
-    return has_images and has_minimal_text
+    return has_minimal_text and image_ratio >= config.min_scan_fallback_image_area_ratio
 
 
 def _page_needs_ocr(
