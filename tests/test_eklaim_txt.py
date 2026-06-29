@@ -258,6 +258,43 @@ def test_split_codes_ignores_empty_values() -> None:
     assert split_codes("") == []
 
 
+def test_build_eklaim_analysis_separates_top_codes_by_care_type() -> None:
+    ri_content = _txt_content(
+        _row(
+            sep="0132R0770626V000301",
+            ptd=PTD_RAWAT_INAP,
+            inacbg="K-4-17-I",
+            diag="A09.9",
+            proc="90.59",
+        ),
+        _row(
+            sep="0132R0770626V000302",
+            ptd=PTD_RAWAT_INAP,
+            inacbg="K-4-17-I",
+            diag="A09.9;E86",
+            proc="88.01",
+        ),
+    )
+    rj_content = _txt_content(
+        _row(
+            sep="0132R0770626V000401",
+            ptd=PTD_RAWAT_JALAN,
+            inacbg="Q-5-44-0",
+            diag="J18.9",
+            proc="99.99",
+        )
+    )
+    ri_df = read_eklaim_txt(ri_content).df
+    rj_df = read_eklaim_txt(rj_content).df
+    analysis = build_eklaim_analysis(ri_df, rj_df)
+
+    assert analysis.top_icd10_ri_df.iloc[0]["Kode"] == "A09.9"
+    assert analysis.top_icd10_ri_df.iloc[0]["Frekuensi"] == 2
+    assert analysis.top_icd10_rj_df.iloc[0]["Kode"] == "J18.9"
+    assert set(analysis.top_icd9_ri_df["Kode"]) == {"90.59", "88.01"}
+    assert analysis.top_icd9_rj_df.iloc[0]["Kode"] == "99.99"
+
+
 def test_combine_eklaim_frames_warns_duplicate_sep() -> None:
     ri = read_eklaim_txt(
         _txt_content(_row(sep="0132R0770626V000999", ptd=PTD_RAWAT_INAP, inacbg="K-4-17-I")),

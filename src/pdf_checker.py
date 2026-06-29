@@ -217,8 +217,6 @@ def _page_needs_ocr(
     page_has_scan: bool,
 ) -> bool:
     text_is_minimal = len(normalize_text(page_text)) < config.min_page_text_chars
-    if text_is_minimal:
-        return True
     return page_has_scan and text_is_minimal
 
 

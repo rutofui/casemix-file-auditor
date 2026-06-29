@@ -57,6 +57,22 @@ pip install -r requirements.txt
 
 `install.bat` di Windows memakai `pip install --no-cache-dir` supaya cache download dependency tidak menambah ukuran folder.
 
+### 1.0. Instalasi Opsional: Mode OCR
+
+Mode OCR membutuhkan dependency tambahan (PaddleOCR, ukuran download ~300 MB+). Install **hanya jika** fitur OCR akan digunakan:
+
+```bash
+pip install -r requirements-ocr.txt
+```
+
+Di Windows:
+
+```bat
+pip install --no-cache-dir -r requirements-ocr.txt
+```
+
+Tanpa `requirements-ocr.txt`, semua fitur lain (analisis TXT, review jumlah berkas, review isi tanpa OCR) tetap berjalan normal.
+
 ## 1.1. Menjaga Folder Project Tetap Ringan
 
 Folder `.venv` berisi dependency Python dan ukurannya jauh lebih besar daripada kode aplikasi. Folder ini boleh dihapus dan dibuat ulang kapan pun dengan `install.bat`.
@@ -135,6 +151,15 @@ Output export: `hasil_review_isi_berkas.xlsx`.
 
 ## Akses Domain Cloudflare
 
+> **⚠️ PERINGATAN KEAMANAN — WAJIB DIBACA SEBELUM DEPLOYMENT PUBLIK**
+>
+> Tanpa Cloudflare Access, domain publik (`https://casemix.ahmadluthfi.online`) dapat diakses siapa pun yang mengetahui URL — termasuk data pasien berupa nama, No RM, dan diagnosis klinis.
+>
+> **Sebelum menggunakan mode publik dengan data klaim nyata, wajib salah satu dari:**
+> 1. Aktifkan **Cloudflare Zero Trust Access** (autentikasi per user/email), atau
+> 2. Batasi akses hanya dari jaringan internal (VPN / IP allowlist), atau
+> 3. Jalankan aplikasi hanya secara lokal (`http://localhost:8501`) tanpa tunnel.
+
 Aplikasi ini sudah dikonfigurasi melalui Cloudflare Tunnel:
 
 - Domain publik: `https://casemix.ahmadluthfi.online`
@@ -161,8 +186,6 @@ bash scripts/stop_services.sh
 ```
 
 Log Streamlit tersimpan di `.streamlit.log`. Log Cloudflare Tunnel tersimpan di `~/.cloudflared/casemix-auditor.log`.
-
-Catatan keamanan: tanpa Cloudflare Access, domain publik dapat dibuka siapa pun yang mengetahui URL. Untuk data pasien/berkas klaim nyata, aktifkan Cloudflare Zero Trust Access atau batasi akses jaringan sebelum dipakai operasional.
 
 ## 4. Input PDF Untuk Review Jumlah Berkas
 

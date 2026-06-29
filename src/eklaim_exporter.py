@@ -5,12 +5,16 @@ from io import BytesIO
 import pandas as pd
 
 from src.eklaim_analyzer import EklaimAnalysisResult
+from src.eklaim_formatting import format_analysis_frame_for_display, format_summary_value
 from src.exporter import format_worksheet
 
 
 def export_eklaim_analysis_to_excel(result: EklaimAnalysisResult) -> bytes:
     output = BytesIO()
-    summary_rows = [{"Metrik": key, "Nilai": value} for key, value in result.summary.items()]
+    summary_rows = [
+        {"Metrik": key, "Nilai": format_summary_value(key, value)}
+        for key, value in result.summary.items()
+    ]
     summary_df = pd.DataFrame(summary_rows)
 
     cmi_rows = []
@@ -36,8 +40,10 @@ def export_eklaim_analysis_to_excel(result: EklaimAnalysisResult) -> bytes:
         ("selisih_lebih_30pct", result.selisih_gt_30pct_df),
         ("selisih_dpjp_ri", result.dpjp_ri_df),
         ("selisih_dpjp_rj", result.dpjp_rj_df),
-        ("top30_icd10", result.top_icd10_df),
-        ("top30_icd9", result.top_icd9_df),
+        ("top30_icd10_ri", result.top_icd10_ri_df),
+        ("top30_icd10_rj", result.top_icd10_rj_df),
+        ("top30_icd9_ri", result.top_icd9_ri_df),
+        ("top30_icd9_rj", result.top_icd9_rj_df),
     ]
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -46,7 +52,11 @@ def export_eklaim_analysis_to_excel(result: EklaimAnalysisResult) -> bytes:
             if frame is None or frame.empty:
                 pd.DataFrame().to_excel(writer, sheet_name=safe_name, index=False)
             else:
-                frame.to_excel(writer, sheet_name=safe_name, index=False)
+                format_analysis_frame_for_display(frame).to_excel(
+                    writer,
+                    sheet_name=safe_name,
+                    index=False,
+                )
 
         for worksheet in writer.book.worksheets:
             format_worksheet(worksheet)

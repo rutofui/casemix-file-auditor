@@ -14,6 +14,7 @@ from src.parser_eklaim_txt import (
     combine_eklaim_frames,
     read_eklaim_txt,
 )
+from src.eklaim_formatting import format_analysis_frame_for_display, format_summary_value
 from src.ui.layout import format_elapsed, render_panel_header
 
 
@@ -162,8 +163,10 @@ def render_txt_analysis_results() -> None:
         analysis.dpjp_rj_df,
         "selisih_dpjp_rj",
     )
-    _render_section_table("Top 30 ICD-10", analysis.top_icd10_df, "top30_icd10")
-    _render_section_table("Top 30 ICD-9-CM", analysis.top_icd9_df, "top30_icd9")
+    _render_section_table("Top 30 ICD-10 (Rawat Inap)", analysis.top_icd10_ri_df, "top30_icd10_ri")
+    _render_section_table("Top 30 ICD-10 (Rawat Jalan)", analysis.top_icd10_rj_df, "top30_icd10_rj")
+    _render_section_table("Top 30 ICD-9-CM (Rawat Inap)", analysis.top_icd9_ri_df, "top30_icd9_ri")
+    _render_section_table("Top 30 ICD-9-CM (Rawat Jalan)", analysis.top_icd9_rj_df, "top30_icd9_rj")
 
 
 def _render_summary_metrics(summary: dict[str, object]) -> None:
@@ -171,7 +174,7 @@ def _render_summary_metrics(summary: dict[str, object]) -> None:
     for start in range(0, len(items), 3):
         cols = st.columns(3)
         for col, (label, value) in zip(cols, items[start : start + 3]):
-            col.metric(label, _format_metric_value(value))
+            col.metric(label, _format_metric_value(value, label))
 
 
 def _render_casemix_metrics(casemix_index: dict[str, object]) -> None:
@@ -192,12 +195,19 @@ def _render_section_table(title: str, frame: pd.DataFrame, key_prefix: str) -> N
         if frame is None or frame.empty:
             st.info("Tidak ada data untuk bagian ini.")
             return
-        st.dataframe(frame, width="stretch", hide_index=True, key=f"{key_prefix}_table")
+        st.dataframe(
+            format_analysis_frame_for_display(frame),
+            width="stretch",
+            hide_index=True,
+            key=f"{key_prefix}_table",
+        )
 
 
-def _format_metric_value(value: object) -> str:
+def _format_metric_value(value: object, label: str = "") -> str:
+    if label:
+        return format_summary_value(label, value)
     if isinstance(value, float):
-        return f"{value:,.2f}".replace(",", ".")
+        return f"{value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     if isinstance(value, int):
         return f"{value:,}".replace(",", ".")
     return str(value)

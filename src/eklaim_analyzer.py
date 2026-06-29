@@ -37,8 +37,10 @@ class EklaimAnalysisResult:
     selisih_gt_30pct_df: pd.DataFrame = field(default_factory=pd.DataFrame)
     dpjp_ri_df: pd.DataFrame = field(default_factory=pd.DataFrame)
     dpjp_rj_df: pd.DataFrame = field(default_factory=pd.DataFrame)
-    top_icd10_df: pd.DataFrame = field(default_factory=pd.DataFrame)
-    top_icd9_df: pd.DataFrame = field(default_factory=pd.DataFrame)
+    top_icd10_ri_df: pd.DataFrame = field(default_factory=pd.DataFrame)
+    top_icd10_rj_df: pd.DataFrame = field(default_factory=pd.DataFrame)
+    top_icd9_ri_df: pd.DataFrame = field(default_factory=pd.DataFrame)
+    top_icd9_rj_df: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
 def build_eklaim_analysis(
@@ -50,18 +52,20 @@ def build_eklaim_analysis(
     combined = pd.concat([ri, rj], ignore_index=True) if not ri.empty or not rj.empty else pd.DataFrame()
 
     return EklaimAnalysisResult(
-    summary=_build_summary(ri, rj, combined),
-    casemix_index=_build_casemix_index(ri, rj),
-    completeness_df=_build_completeness_df(combined),
-    severity_high_los_low_df=_build_severity_high_los_low_df(ri),
-    severity_low_los_high_df=_build_severity_low_los_high_df(ri),
-    intensive_care_df=_build_intensive_care_df(combined),
-    grouper_gt_rs_df=_build_grouper_gt_rs_df(combined),
-    selisih_gt_30pct_df=_build_selisih_gt_30pct_df(combined),
-    dpjp_ri_df=_build_dpjp_summary_df(ri),
-    dpjp_rj_df=_build_dpjp_summary_df(rj),
-    top_icd10_df=_build_top_codes_df(combined, code_column="DIAGLIST", label="ICD-10"),
-    top_icd9_df=_build_top_codes_df(combined, code_column="PROCLIST", label="ICD-9-CM"),
+        summary=_build_summary(ri, rj, combined),
+        casemix_index=_build_casemix_index(ri, rj),
+        completeness_df=_build_completeness_df(combined),
+        severity_high_los_low_df=_build_severity_high_los_low_df(ri),
+        severity_low_los_high_df=_build_severity_low_los_high_df(ri),
+        intensive_care_df=_build_intensive_care_df(combined),
+        grouper_gt_rs_df=_build_grouper_gt_rs_df(combined),
+        selisih_gt_30pct_df=_build_selisih_gt_30pct_df(combined),
+        dpjp_ri_df=_build_dpjp_summary_df(ri),
+        dpjp_rj_df=_build_dpjp_summary_df(rj),
+        top_icd10_ri_df=_build_top_codes_df(ri, code_column="DIAGLIST", label="ICD-10"),
+        top_icd10_rj_df=_build_top_codes_df(rj, code_column="DIAGLIST", label="ICD-10"),
+        top_icd9_ri_df=_build_top_codes_df(ri, code_column="PROCLIST", label="ICD-9-CM"),
+        top_icd9_rj_df=_build_top_codes_df(rj, code_column="PROCLIST", label="ICD-9-CM"),
     )
 
 
@@ -69,11 +73,18 @@ def _prepare_claims(df: pd.DataFrame, default_ptd: str) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame()
     prepared = df.copy()
-    prepared["_ptd"] = prepared.get("_ptd", default_ptd).astype(str).str.strip()
-    prepared["_total_tarif_num"] = prepared.get("_total_tarif_num", prepared.get("TOTAL_TARIF")).map(_as_number)
-    prepared["_tarif_rs_num"] = prepared.get("_tarif_rs_num", prepared.get("TARIF_RS")).map(_as_number)
-    prepared["_los_num"] = prepared.get("_los_num", prepared.get("LOS")).map(_as_number)
-    prepared["_severity"] = prepared.get("_severity", prepared.get("INACBG").map(_severity_from_column))
+    if "_ptd" in prepared.columns:
+        prepared["_ptd"] = prepared["_ptd"].astype(str).str.strip()
+    else:
+        prepared["_ptd"] = default_ptd
+    if "_total_tarif_num" not in prepared.columns:
+        prepared["_total_tarif_num"] = prepared.get("TOTAL_TARIF", pd.Series(dtype=object)).map(_as_number)
+    if "_tarif_rs_num" not in prepared.columns:
+        prepared["_tarif_rs_num"] = prepared.get("TARIF_RS", pd.Series(dtype=object)).map(_as_number)
+    if "_los_num" not in prepared.columns:
+        prepared["_los_num"] = prepared.get("LOS", pd.Series(dtype=object)).map(_as_number)
+    if "_severity" not in prepared.columns:
+        prepared["_severity"] = prepared.get("INACBG", pd.Series(dtype=object)).map(_severity_from_column)
     prepared["_selisih_rp"] = prepared["_tarif_rs_num"] - prepared["_total_tarif_num"]
     prepared["_selisih_pct"] = prepared.apply(_selisih_pct, axis=1)
     return prepared
