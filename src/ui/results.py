@@ -63,6 +63,7 @@ def render_review_panel(
     export_file_name: str,
     orphan_title: str,
     widget_prefix: str,
+    section_title: str = "Hasil Review",
     duration_sec: float | None = None,
 ) -> None:
     has_results = review_df is not None and summary is not None
@@ -81,12 +82,16 @@ def render_review_panel(
             col.metric(label, value)
 
     st.divider()
+
+    st.subheader(section_title)
+
     left, right = st.columns([3, 1])
     with left:
         selected_status = st.selectbox(
             "Filter Status Akhir",
             status_options,
             key=f"{widget_prefix}_status_filter",
+            disabled=not has_results,
         )
     with right:
         st.download_button(
@@ -100,7 +105,7 @@ def render_review_panel(
         )
 
     filtered_df = review_df
-    if selected_status != "Semua":
+    if has_results and selected_status != "Semua":
         filtered_df = review_df[review_df["Status Akhir"] == selected_status]
 
     st.dataframe(filtered_df, width="stretch", hide_index=True)

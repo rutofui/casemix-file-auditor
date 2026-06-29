@@ -126,7 +126,6 @@ def render_file_review_tab() -> None:
 def render_file_panel() -> None:
     if st.session_state.get("file_review_df") is None:
         return
-    st.subheader("Hasil Review Jumlah Berkas")
     render_review_panel(
         review_df=st.session_state.get("file_review_df"),
         summary=st.session_state.get("file_summary"),
@@ -138,5 +137,6 @@ def render_file_panel() -> None:
         export_file_name="hasil_review_jumlah_berkas.xlsx",
         orphan_title="PDF di folder/list tetapi tidak ada di Excel",
         widget_prefix="file_review",
+        section_title="Hasil Review Jumlah Berkas",
         duration_sec=st.session_state.get("file_review_duration_sec"),
     )

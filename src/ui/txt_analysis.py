@@ -100,19 +100,23 @@ def run_txt_analysis(*, ri_file, rj_file) -> None:
 
 def render_txt_analysis_results() -> None:
     analysis = st.session_state.get("eklaim_analysis")
-    if analysis is None:
-        return
+    has_results = analysis is not None
 
     duration_sec = st.session_state.get("eklaim_analysis_duration_sec")
     if duration_sec is not None:
         st.caption(f"Durasi analisis terakhir: **{format_elapsed(duration_sec)}**")
+
+    if not has_results:
+        return
 
     st.subheader("Ringkasan")
     _render_summary_metrics(analysis.summary)
     _render_casemix_metrics(analysis.casemix_index)
 
     st.divider()
-    right = st.columns([3, 1])[1]
+    left, right = st.columns([3, 1])
+    with left:
+        st.caption("Unduh semua tabel hasil analisis dalam satu file Excel.")
     with right:
         st.download_button(
             "Export Excel",
@@ -120,6 +124,7 @@ def render_txt_analysis_results() -> None:
             file_name="hasil_analisis_txt_eklaim.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             width="stretch",
+            disabled=not has_results,
             key="eklaim_export_download",
         )
 

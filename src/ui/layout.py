@@ -34,35 +34,81 @@ def inject_layout_styles() -> None:
     st.markdown(
         """
         <style>
-        div[data-testid="stVerticalBlockBorderWrapper"] {
-            border-radius: 8px;
-        }
+        /* ── Panel header ── */
         .casemix-panel-header {
-            border-radius: 8px;
+            border-radius: 10px;
             color: white;
-            margin: 0 0 1rem 0;
-            padding: 1rem 1.1rem;
+            margin: 0 0 1.25rem 0;
+            padding: 1rem 1.25rem;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.13);
         }
         .casemix-panel-header h2 {
             color: white;
-            font-size: 1.45rem;
-            line-height: 1.2;
-            margin: 0 0 .35rem 0;
+            font-size: 1.35rem;
+            font-weight: 700;
+            line-height: 1.25;
+            margin: 0 0 0.25rem 0;
             padding: 0;
         }
         .casemix-panel-header p {
-            color: rgba(255, 255, 255, .9);
-            font-size: .92rem;
+            color: rgba(255, 255, 255, 0.88);
+            font-size: 0.88rem;
             margin: 0;
         }
-        .file-panel {
-            background: #0f766e;
+        .file-panel    { background: linear-gradient(130deg, #0f766e 0%, #0d9488 100%); }
+        .content-panel { background: linear-gradient(130deg, #9a3412 0%, #c2410c 100%); }
+        .txt-panel     { background: linear-gradient(130deg, #1e3a8a 0%, #2563eb 100%); }
+
+        /* ── Metric cards ── */
+        div[data-testid="metric-container"] {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 0.65rem 0.9rem;
         }
-        .content-panel {
-            background: #b45309;
+        div[data-testid="stMetricLabel"] p {
+            font-size: 0.78rem;
+            color: #64748b;
+            font-weight: 500;
         }
-        .txt-panel {
-            background: #1e40af;
+        div[data-testid="stMetricValue"] {
+            font-size: 1.45rem;
+            font-weight: 700;
+        }
+
+        /* ── Bordered container (version panel) ── */
+        div[data-testid="stVerticalBlockBorderWrapper"] {
+            border-radius: 8px;
+            border-color: #e2e8f0 !important;
+        }
+
+        /* ── Active tab ── */
+        button[data-baseweb="tab"] {
+            font-size: 0.9rem;
+        }
+        button[data-baseweb="tab"][aria-selected="true"] {
+            font-weight: 700;
+        }
+
+        /* ── Expanders ── */
+        div[data-testid="stExpander"] {
+            border: 1px solid #e2e8f0 !important;
+            border-radius: 8px !important;
+        }
+        div[data-testid="stExpander"] summary p {
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+
+        /* ── Dividers ── */
+        hr[data-testid="stDivider"] {
+            margin: 0.5rem 0;
+            border-color: #e2e8f0;
+        }
+
+        /* ── Success / Error / Warning boxes ── */
+        div[data-testid="stAlert"] {
+            border-radius: 8px;
         }
         </style>
         """,

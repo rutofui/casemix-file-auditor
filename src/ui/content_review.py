@@ -106,6 +106,7 @@ def render_content_review_tab() -> None:
     )
     if st.button(
         "Jalankan Review Isi Berkas",
+        type="primary",
         width="stretch",
         key="run_content_review",
     ):
@@ -123,7 +124,6 @@ def render_content_panel() -> None:
     if st.session_state.get("content_review_df") is None:
         return
     use_ocr = bool(st.session_state.get("content_use_ocr", False))
-    st.subheader("Hasil Review Isi Berkas")
     render_review_panel(
         review_df=st.session_state.get("content_review_df"),
         summary=st.session_state.get("content_summary"),
@@ -135,5 +135,6 @@ def render_content_panel() -> None:
         export_file_name="hasil_review_isi_berkas_ocr.xlsx" if use_ocr else "hasil_review_isi_berkas.xlsx",
         orphan_title="PDF di folder/list tetapi tidak ada di Excel",
         widget_prefix="content_review",
+        section_title="Hasil Review Isi Berkas",
         duration_sec=st.session_state.get("content_review_duration_sec"),
     )
