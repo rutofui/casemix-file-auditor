@@ -1,5 +1,5 @@
 {
-  "built_at": "2026-06-30T05:35:22+07:00",
-  "commit_sha": "6679472",
-  "commit_message": "fix: harden scan detection and local binding"
+  "built_at": "2026-06-30T05:35:37+07:00",
+  "commit_sha": "df72b62",
+  "commit_message": "chore: update BUILD_INFO.json"
 }
