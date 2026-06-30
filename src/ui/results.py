@@ -19,6 +19,12 @@ def empty_file_summary() -> dict[str, int]:
     }
 
 
+def empty_file_icd_summary() -> dict[str, int]:
+    summary = empty_file_summary()
+    summary["Kode ICD tidak sesuai"] = 0
+    return summary
+
+
 def empty_content_summary() -> dict[str, int]:
     return {
         "Total PDF": 0,

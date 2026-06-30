@@ -18,6 +18,7 @@ from .config import (
     LIP_KEYWORDS,
     PDFCheckConfig,
     SEP_KEYWORDS,
+    code_present_in_text,
     contains_keyword,
     detect_document_titles,
     detect_document_titles_from_pages,
@@ -48,6 +49,96 @@ class PDFCheckResult:
     needs_manual_review: bool = False
     error: str = ""
     notes: list[str] = field(default_factory=list)
+
+
+@dataclass
+class FirstPageCodeCheckResult:
+    readable: bool = False
+    icd10_missing: list[str] = field(default_factory=list)
+    icd9_missing: list[str] = field(default_factory=list)
+    error: str = ""
+
+
+def check_first_page_codes(
+    local_paths: list[str],
+    icd10_codes: list[str],
+    icd9_codes: list[str],
+) -> FirstPageCodeCheckResult:
+    """Check whether ICD-10/ICD-9-CM codes are present on the first page of
+    one or more matched PDF files (digital text only, no OCR). When multiple
+    paths are given (duplicate PDFs for one SEP), text is unioned across all
+    of them before checking presence.
+    """
+    if not local_paths:
+        return FirstPageCodeCheckResult(
+            readable=False,
+            icd10_missing=list(icd10_codes),
+            icd9_missing=list(icd9_codes),
+            error="Tidak ada path PDF untuk diperiksa.",
+        )
+
+    try:
+        import fitz  # PyMuPDF
+    except Exception as exc:
+        return FirstPageCodeCheckResult(
+            readable=False,
+            icd10_missing=list(icd10_codes),
+            icd9_missing=list(icd9_codes),
+            error=f"PyMuPDF belum tersedia: {exc}",
+        )
+
+    combined_text_parts: list[str] = []
+    errors: list[str] = []
+    any_readable = False
+
+    for local_path in local_paths:
+        path = Path(local_path)
+        if not local_path or not path.exists():
+            errors.append("File PDF tidak dapat diakses.")
+            continue
+        try:
+            document = fitz.open(str(path))
+        except Exception as exc:
+            errors.append(f"PDF gagal dibuka: {exc}")
+            continue
+        try:
+            if document.page_count > 0:
+                page = document.load_page(0)
+                combined_text_parts.append(page.get_text("text") or "")
+                any_readable = True
+        except Exception as exc:
+            errors.append(f"Halaman pertama PDF gagal dibaca: {exc}")
+        finally:
+            document.close()
+
+    if not any_readable:
+        return FirstPageCodeCheckResult(
+            readable=False,
+            icd10_missing=list(icd10_codes),
+            icd9_missing=list(icd9_codes),
+            error="; ".join(_unique_preserve_order(errors)) or "Halaman pertama PDF tidak dapat dibaca.",
+        )
+
+    combined_text = "\n".join(combined_text_parts)
+    icd10_missing = [code for code in icd10_codes if not code_present_in_text(combined_text, code)]
+    icd9_missing = [code for code in icd9_codes if not code_present_in_text(combined_text, code)]
+
+    return FirstPageCodeCheckResult(
+        readable=True,
+        icd10_missing=icd10_missing,
+        icd9_missing=icd9_missing,
+        error="; ".join(_unique_preserve_order(errors)),
+    )
+
+
+def _unique_preserve_order(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    output: list[str] = []
+    for value in values:
+        if value and value not in seen:
+            seen.add(value)
+            output.append(value)
+    return output
 
 
 def is_paddleocr_available() -> bool:

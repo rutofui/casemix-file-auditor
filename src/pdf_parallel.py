@@ -6,7 +6,7 @@ import traceback
 from typing import Callable, Iterable
 
 from .config import PDFCheckConfig
-from .pdf_checker import PDFCheckResult, check_pdf
+from .pdf_checker import FirstPageCodeCheckResult, PDFCheckResult, check_first_page_codes, check_pdf
 
 
 MAX_AUTO_PDF_WORKERS = 4
@@ -116,5 +116,100 @@ def _failed_pdf_result(source_id: str, local_path: str, error: str) -> PDFCheckR
         source_id=source_id,
         local_path=local_path,
         needs_manual_review=True,
+        error=error,
+    )
+
+
+def check_first_page_codes_parallel(
+    jobs: Iterable[tuple[str, list[str], list[str], list[str]]],
+    *,
+    progress_callback: Callable[[int, int, str], None] | None = None,
+    tick_callback: Callable[[], None] | None = None,
+) -> dict[str, FirstPageCodeCheckResult]:
+    job_list = list(jobs)
+    total = len(job_list)
+    if total == 0:
+        return {}
+
+    worker_count = automatic_pdf_worker_count(total)
+    if worker_count == 1:
+        return _check_first_page_codes_serial(
+            job_list,
+            progress_callback=progress_callback,
+            tick_callback=tick_callback,
+        )
+
+    results: dict[str, FirstPageCodeCheckResult] = {}
+    with ProcessPoolExecutor(max_workers=worker_count) as executor:
+        futures = {
+            executor.submit(_check_first_page_codes_worker, sep, local_paths, icd10_codes, icd9_codes): sep
+            for sep, local_paths, icd10_codes, icd9_codes in job_list
+        }
+        pending = set(futures.keys())
+        completed = 0
+        while pending:
+            done, pending = wait(pending, timeout=1.0, return_when=FIRST_COMPLETED)
+            if tick_callback is not None:
+                tick_callback()
+            for future in done:
+                completed += 1
+                sep = futures[future]
+                try:
+                    result = future.result()
+                except Exception:
+                    result = _failed_first_page_result(
+                        [],
+                        [],
+                        "Pengecekan kode ICD gagal di worker paralel:\n" + traceback.format_exc(),
+                    )
+                results[sep] = result
+                if progress_callback is not None:
+                    progress_callback(completed, total, sep)
+    return results
+
+
+def _check_first_page_codes_serial(
+    jobs: list[tuple[str, list[str], list[str], list[str]]],
+    *,
+    progress_callback: Callable[[int, int, str], None] | None = None,
+    tick_callback: Callable[[], None] | None = None,
+) -> dict[str, FirstPageCodeCheckResult]:
+    results: dict[str, FirstPageCodeCheckResult] = {}
+    total = len(jobs)
+    for completed, (sep, local_paths, icd10_codes, icd9_codes) in enumerate(jobs, start=1):
+        if tick_callback is not None:
+            tick_callback()
+        try:
+            result = check_first_page_codes(local_paths, icd10_codes, icd9_codes)
+        except Exception:
+            result = _failed_first_page_result(
+                icd10_codes,
+                icd9_codes,
+                "Pengecekan kode ICD gagal:\n" + traceback.format_exc(),
+            )
+        results[sep] = result
+        if progress_callback is not None:
+            progress_callback(completed, total, sep)
+    return results
+
+
+def _check_first_page_codes_worker(
+    sep: str,
+    local_paths: list[str],
+    icd10_codes: list[str],
+    icd9_codes: list[str],
+) -> FirstPageCodeCheckResult:
+    return check_first_page_codes(local_paths, icd10_codes, icd9_codes)
+
+
+def _failed_first_page_result(
+    icd10_codes: list[str],
+    icd9_codes: list[str],
+    error: str,
+) -> FirstPageCodeCheckResult:
+    return FirstPageCodeCheckResult(
+        readable=False,
+        icd10_missing=list(icd10_codes),
+        icd9_missing=list(icd9_codes),
         error=error,
     )

@@ -104,6 +104,53 @@ def read_eklaim_txt(
     return EklaimParseResult(df=df, warnings=warnings, source_label=source_label)
 
 
+def build_file_review_claims(df: pd.DataFrame) -> pd.DataFrame:
+    """Adapt an e-Klaim MIX TXT DataFrame into the claims shape used by
+    ``matcher.build_file_review`` (same canonical column names produced by
+    ``parser_excel.read_claims_excel``), plus the parsed ICD-10/ICD-9-CM code
+    lists needed for the first-page code check.
+    """
+    columns = [
+        "No SEP",
+        "Tanggal Pulang",
+        "No RM",
+        "Nama Pasien",
+        "Diagnosa",
+        "_row_number",
+        "_no_sep_normalized",
+        "_sep_valid",
+        "_icd10_codes",
+        "_icd9_codes",
+    ]
+    if df.empty:
+        return pd.DataFrame(columns=columns)
+
+    out = pd.DataFrame(index=df.index)
+    out["No SEP"] = df["SEP"].map(_safe_string)
+    if "DISCHARGE_DATE" in df.columns:
+        out["Tanggal Pulang"] = df["DISCHARGE_DATE"].map(_safe_string)
+    else:
+        out["Tanggal Pulang"] = ""
+    out["No RM"] = df["MRN"].map(_safe_string)
+    out["Nama Pasien"] = df["NAMA_PASIEN"].map(_safe_string)
+    out["Diagnosa"] = df["DIAGLIST"].map(_safe_string)
+    out["_row_number"] = range(2, len(out) + 2)
+    out["_no_sep_normalized"] = df["_sep_normalized"]
+    out["_sep_valid"] = df["_sep_valid"]
+    out["_icd10_codes"] = df["DIAGLIST"].map(split_codes)
+    out["_icd9_codes"] = df["PROCLIST"].map(split_codes)
+    return out[columns]
+
+
+def _safe_string(value: object) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if text.lower() in {"nan", "none", "nat"}:
+        return ""
+    return text
+
+
 def combine_eklaim_frames(
     ri_result: EklaimParseResult | None,
     rj_result: EklaimParseResult | None,

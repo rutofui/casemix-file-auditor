@@ -13,11 +13,12 @@ from src.parser_file_list import build_file_entry, parse_file_list_text, scan_pd
 from src.pdf_parallel import (
     MAX_OCR_PDF_WORKERS,
     automatic_pdf_worker_count,
+    check_first_page_codes_parallel,
     check_pdfs_parallel,
     resolve_pdf_worker_count,
 )
 from src.config import detect_document_titles, detect_document_titles_from_pages
-from src.pdf_checker import check_pdf
+from src.pdf_checker import check_first_page_codes, check_pdf
 
 
 
@@ -464,6 +465,84 @@ def test_ocr_early_stop_skips_pages_after_all_titles_found() -> None:
         )
         assert "Resume Medis" in r.document_titles
         assert "Pemeriksaan Radiologi" in r.document_titles
+
+
+def test_check_first_page_codes_finds_codes_on_first_page() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        pdf_path = Path(temp_dir) / "page0.pdf"
+        _write_pdf(pdf_path, "DIAGNOSA: A09.9; E86\nTINDAKAN: 90.59")
+
+        result = check_first_page_codes([str(pdf_path)], ["A09.9", "E86"], ["90.59"])
+
+    assert result.readable is True
+    assert result.icd10_missing == []
+    assert result.icd9_missing == []
+
+
+def test_check_first_page_codes_ignores_codes_only_on_later_pages() -> None:
+    import fitz
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        pdf_path = Path(temp_dir) / "multi_page.pdf"
+        doc = fitz.open()
+        page0 = doc.new_page(width=595, height=842)
+        page0.insert_text((72, 72), "Halaman pertama tanpa kode diagnosa.", fontsize=10)
+        page1 = doc.new_page(width=595, height=842)
+        page1.insert_text((72, 72), "DIAGNOSA: A09.9", fontsize=10)
+        doc.save(str(pdf_path))
+        doc.close()
+
+        result = check_first_page_codes([str(pdf_path)], ["A09.9"], [])
+
+    assert result.readable is True
+    assert result.icd10_missing == ["A09.9"]
+
+
+def test_check_first_page_codes_unions_text_across_duplicate_paths() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        path_a = root / "a.pdf"
+        path_b = root / "b.pdf"
+        _write_pdf(path_a, "DIAGNOSA: A09.9")
+        _write_pdf(path_b, "DIAGNOSA: E86")
+
+        result = check_first_page_codes([str(path_a), str(path_b)], ["A09.9", "E86"], [])
+
+    assert result.readable is True
+    assert result.icd10_missing == []
+
+
+def test_check_first_page_codes_nonexistent_path_is_unreadable() -> None:
+    result = check_first_page_codes(["/nonexistent/path/does_not_exist.pdf"], ["A09.9"], ["90.59"])
+
+    assert result.readable is False
+    assert result.icd10_missing == ["A09.9"]
+    assert result.icd9_missing == ["90.59"]
+    assert result.error
+
+
+def test_check_first_page_codes_parallel_matches_serial_results() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        complete_pdf = root / "complete.pdf"
+        missing_pdf = root / "missing.pdf"
+        _write_pdf(complete_pdf, "DIAGNOSA: A09.9; E86")
+        _write_pdf(missing_pdf, "DIAGNOSA: A09.9")
+
+        jobs = [
+            ("sep_complete", [str(complete_pdf)], ["A09.9", "E86"], []),
+            ("sep_missing", [str(missing_pdf)], ["A09.9", "E86"], []),
+        ]
+        serial_results = {
+            sep: check_first_page_codes(paths, icd10, icd9) for sep, paths, icd10, icd9 in jobs
+        }
+        parallel_results = check_first_page_codes_parallel(jobs)
+
+        assert set(parallel_results) == set(serial_results)
+        for sep in serial_results:
+            assert parallel_results[sep].readable == serial_results[sep].readable
+            assert parallel_results[sep].icd10_missing == serial_results[sep].icd10_missing
+            assert parallel_results[sep].icd9_missing == serial_results[sep].icd9_missing
 
 
 def test_content_review_columns_and_requirements_differ_for_ocr_mode() -> None:

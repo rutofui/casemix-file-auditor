@@ -9,6 +9,7 @@ from src.eklaim_analyzer import build_eklaim_analysis
 from src.parser_eklaim_txt import (
     PTD_RAWAT_INAP,
     PTD_RAWAT_JALAN,
+    build_file_review_claims,
     combine_eklaim_frames,
     extract_idrg_fields,
     parse_c2_json_objects,
@@ -306,3 +307,45 @@ def test_combine_eklaim_frames_warns_duplicate_sep() -> None:
     )
     _, _, warnings = combine_eklaim_frames(ri, rj)
     assert any("duplikat" in warning.lower() for warning in warnings)
+
+
+class TestBuildFileReviewClaims:
+    def test_maps_canonical_claim_columns(self):
+        df = read_eklaim_txt(
+            _txt_content(
+                _row(
+                    sep="0132R0770626V000050",
+                    ptd=PTD_RAWAT_INAP,
+                    inacbg="K-4-17-I",
+                    diag="A09.9;E86",
+                    proc="90.59;96.71",
+                    name="KUNIH BINTI KUPANG",
+                    mrn="000074682",
+                )
+            )
+        ).df
+        claims = build_file_review_claims(df)
+        row = claims.iloc[0]
+
+        assert row["No SEP"] == "0132R0770626V000050"
+        assert row["No RM"] == "000074682"
+        assert row["Nama Pasien"] == "KUNIH BINTI KUPANG"
+        assert row["Diagnosa"] == "A09.9;E86"
+        assert row["_no_sep_normalized"] == "0132R0770626V000050"
+        assert bool(row["_sep_valid"]) is True
+        assert row["_icd10_codes"] == ["A09.9", "E86"]
+        assert row["_icd9_codes"] == ["90.59", "96.71"]
+
+    def test_missing_discharge_date_column_yields_blank_tanggal_pulang(self):
+        # HEADER (test fixture) does not include DISCHARGE_DATE.
+        df = read_eklaim_txt(
+            _txt_content(_row(sep="0132R0770626V000051", ptd=PTD_RAWAT_INAP, inacbg="K-4-17-I"))
+        ).df
+        claims = build_file_review_claims(df)
+        assert claims.iloc[0]["Tanggal Pulang"] == ""
+
+    def test_empty_input_returns_empty_dataframe_with_expected_columns(self):
+        claims = build_file_review_claims(pd.DataFrame())
+        assert claims.empty
+        for column in ["No SEP", "Tanggal Pulang", "No RM", "Nama Pasien", "Diagnosa", "_icd10_codes", "_icd9_codes"]:
+            assert column in claims.columns

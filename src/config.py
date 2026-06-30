@@ -31,6 +31,7 @@ STATUS_KURANG_KOMPONEN = "Kurang Komponen"
 STATUS_SALAH_FOLDER = "Salah Folder"
 STATUS_DUPLIKAT = "Duplikat"
 STATUS_REVIEW_MANUAL = "Perlu Review Manual"
+STATUS_ICD_TIDAK_SESUAI = "Kode ICD Tidak Sesuai"
 
 YES = "Ya"
 NO = "Tidak"
@@ -67,6 +68,12 @@ FILE_REVIEW_COLUMNS = [
     "Status Akhir",
     "Catatan",
 ]
+
+FILE_REVIEW_ICD_COLUMNS = FILE_REVIEW_COLUMNS[:-1] + [
+    "ICD-10 Sesuai",
+    "ICD-9-CM Sesuai",
+    "Kode Tidak Ditemukan di PDF",
+] + FILE_REVIEW_COLUMNS[-1:]
 
 CONTENT_REVIEW_COLUMNS = [
     "No SEP",
@@ -240,6 +247,20 @@ def contains_whole_word(text: str, word: str) -> bool:
     if not token:
         return False
     pattern = rf"(?<![A-Z0-9]){re.escape(token)}(?![A-Z0-9])"
+    return re.search(pattern, normalize_text(text)) is not None
+
+
+def code_present_in_text(text: str, code: str) -> bool:
+    """Boundary-safe presence check for ICD-10/ICD-9-CM codes.
+
+    Unlike contains_whole_word, this also treats "." as a non-boundary
+    character so decimal-style ICD-9-CM codes (e.g. "90.59") don't
+    partial-match inside a longer numeric token (e.g. "190.591").
+    """
+    token = normalize_text(code)
+    if not token:
+        return False
+    pattern = rf"(?<![A-Z0-9.]){re.escape(token)}(?![A-Z0-9.])"
     return re.search(pattern, normalize_text(text)) is not None
 
 

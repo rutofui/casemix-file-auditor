@@ -8,6 +8,7 @@ import pandas as pd
 from .config import (
     CONTENT_REVIEW_COLUMNS,
     FILE_REVIEW_COLUMNS,
+    FILE_REVIEW_ICD_COLUMNS,
     NO,
     OCR_CONTENT_REVIEW_COLUMNS,
     OCR_REQUIRED_COMPONENTS,
@@ -19,6 +20,7 @@ from .config import (
     STATUS_FOLDER_SESUAI,
     STATUS_FOLDER_TIDAK_ADA_FILE,
     STATUS_FOLDER_TIDAK_TERDETEKSI,
+    STATUS_ICD_TIDAK_SESUAI,
     STATUS_KURANG_KOMPONEN,
     STATUS_KURANG_PDF,
     STATUS_LENGKAP,
@@ -32,6 +34,7 @@ from .config import (
 def build_file_review(
     claims_df: pd.DataFrame,
     file_entries_df: pd.DataFrame,
+    icd_check_results: dict[str, Any] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, int]]:
     file_entries = file_entries_df.copy() if file_entries_df is not None else pd.DataFrame()
     index_entries = (
@@ -43,12 +46,13 @@ def build_file_review(
         claims_df.loc[claims_df["_sep_valid"].astype(bool), "_no_sep_normalized"].dropna().astype(str)
     )
     rows = [
-        _review_one_file_count(claim=claim, index_entries=index_entries)
+        _review_one_file_count(claim=claim, index_entries=index_entries, icd_check_results=icd_check_results)
         for _, claim in claims_df.iterrows()
     ]
-    review_df = pd.DataFrame(rows, columns=FILE_REVIEW_COLUMNS)
+    columns = FILE_REVIEW_ICD_COLUMNS if icd_check_results is not None else FILE_REVIEW_COLUMNS
+    review_df = pd.DataFrame(rows, columns=columns)
     orphan_df = build_orphan_pdf_table(index_entries, valid_claim_seps)
-    summary = build_file_summary(review_df, claims_df, orphan_df)
+    summary = build_file_summary(review_df, claims_df, orphan_df, icd_check_active=icd_check_results is not None)
     return review_df, orphan_df, summary
 
 
@@ -109,9 +113,11 @@ def build_file_summary(
     review_df: pd.DataFrame,
     claims_df: pd.DataFrame,
     orphan_df: pd.DataFrame,
+    *,
+    icd_check_active: bool = False,
 ) -> dict[str, int]:
     if review_df.empty:
-        return {
+        summary = {
             "Total klaim": 0,
             "Total SEP valid": 0,
             "PDF ditemukan": 0,
@@ -121,7 +127,10 @@ def build_file_summary(
             "PDF tanpa Excel": 0,
             "Jumlah lengkap": 0,
         }
-    return {
+        if icd_check_active:
+            summary["Kode ICD tidak sesuai"] = 0
+        return summary
+    summary = {
         "Total klaim": int(len(review_df)),
         "Total SEP valid": int(claims_df["_sep_valid"].astype(bool).sum()),
         "PDF ditemukan": int((review_df["Status File"] == STATUS_FILE_ADA).sum()),
@@ -131,6 +140,9 @@ def build_file_summary(
         "PDF tanpa Excel": int(len(orphan_df)),
         "Jumlah lengkap": int((review_df["Status Akhir"] == STATUS_LENGKAP).sum()),
     }
+    if icd_check_active:
+        summary["Kode ICD tidak sesuai"] = int((review_df["Status Akhir"] == STATUS_ICD_TIDAK_SESUAI).sum())
+    return summary
 
 
 def build_content_summary(
@@ -200,7 +212,12 @@ def build_ocr_content_summary(review_df: pd.DataFrame) -> dict[str, int]:
     }
 
 
-def _review_one_file_count(*, claim: pd.Series, index_entries: pd.DataFrame) -> dict[str, object]:
+def _review_one_file_count(
+    *,
+    claim: pd.Series,
+    index_entries: pd.DataFrame,
+    icd_check_results: dict[str, Any] | None = None,
+) -> dict[str, object]:
     sep = str(claim.get("_no_sep_normalized", "") or "")
     sep_valid = bool(claim.get("_sep_valid", False))
     notes: list[str] = []
@@ -225,12 +242,48 @@ def _review_one_file_count(*, claim: pd.Series, index_entries: pd.DataFrame) -> 
         final_status = STATUS_SALAH_FOLDER
     elif row["Status Folder"] == STATUS_FOLDER_TIDAK_TERDETEKSI:
         final_status = STATUS_REVIEW_MANUAL
+    elif icd_check_results is not None:
+        final_status = _apply_icd_check(row, sep, icd_check_results, notes)
     else:
         final_status = STATUS_LENGKAP
 
     row["Status Akhir"] = final_status
     row["Catatan"] = " ".join(_unique_non_empty(notes))
     return row
+
+
+def _apply_icd_check(
+    row: dict[str, object],
+    sep: str,
+    icd_check_results: dict[str, Any],
+    notes: list[str],
+) -> str:
+    result = icd_check_results.get(sep)
+    if result is None:
+        # SEP intentionally skipped by the orchestrator (e.g. no matched local
+        # PDF) — don't penalize a row the check never attempted.
+        return STATUS_LENGKAP
+
+    icd10_missing = list(_result_value(result, "icd10_missing", []) or [])
+    icd9_missing = list(_result_value(result, "icd9_missing", []) or [])
+    readable = bool(_result_value(result, "readable", False))
+
+    row["ICD-10 Sesuai"] = bool_to_ya_tidak(not icd10_missing)
+    row["ICD-9-CM Sesuai"] = bool_to_ya_tidak(not icd9_missing)
+    missing_codes = _unique_non_empty(icd10_missing + icd9_missing)
+    row["Kode Tidak Ditemukan di PDF"] = ", ".join(missing_codes)
+
+    if not readable:
+        row["ICD-10 Sesuai"] = NO
+        row["ICD-9-CM Sesuai"] = NO
+        notes.append("Halaman pertama PDF tidak dapat dibaca untuk verifikasi kode ICD.")
+        return STATUS_ICD_TIDAK_SESUAI
+
+    if missing_codes:
+        notes.append(f"Kode tidak ditemukan di halaman pertama PDF: {', '.join(missing_codes)}.")
+        return STATUS_ICD_TIDAK_SESUAI
+
+    return STATUS_LENGKAP
 
 
 def _review_one_pdf_content(
@@ -329,6 +382,9 @@ def _base_file_row(claim: pd.Series, sep: str) -> dict[str, object]:
         "Status Folder": STATUS_FOLDER_TIDAK_ADA_FILE,
         "Duplikat": NO,
         "Status Akhir": STATUS_KURANG_PDF,
+        "ICD-10 Sesuai": "-",
+        "ICD-9-CM Sesuai": "-",
+        "Kode Tidak Ditemukan di PDF": "",
         "Catatan": "",
     }
 

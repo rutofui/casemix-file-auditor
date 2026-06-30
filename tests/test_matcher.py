@@ -4,15 +4,24 @@ import pandas as pd
 import pytest
 
 from src.config import (
+    FILE_REVIEW_COLUMNS,
+    FILE_REVIEW_ICD_COLUMNS,
+    STATUS_DUPLIKAT,
     STATUS_FOLDER_SALAH,
     STATUS_FOLDER_SESUAI,
     STATUS_FOLDER_TIDAK_TERDETEKSI,
+    STATUS_ICD_TIDAK_SESUAI,
+    STATUS_LENGKAP,
+    STATUS_SALAH_FOLDER,
 )
 from src.matcher import (
     _day_from_date_value,
     _folder_status,
+    build_file_review,
     build_orphan_pdf_table,
 )
+from src.pdf_checker import FirstPageCodeCheckResult
+from src.parser_file_list import build_file_entry
 
 
 # ---------------------------------------------------------------------------
@@ -165,3 +174,135 @@ class TestBuildOrphanPdfTable:
         orphan = build_orphan_pdf_table(entries, valid_seps)
         assert len(orphan) == 1
         assert orphan.iloc[0]["No SEP"] == "0132R0010101V000002"
+
+
+# ---------------------------------------------------------------------------
+# build_file_review with icd_check_results (TXT + Folder ICD check)
+# ---------------------------------------------------------------------------
+
+
+def _make_claim(sep: str, *, tanggal_pulang: str = "2026-06-05") -> dict:
+    return {
+        "No SEP": sep,
+        "Tanggal Pulang": tanggal_pulang,
+        "No RM": "RM001",
+        "Nama Pasien": "Pasien A",
+        "Diagnosa": "A09.9;E86",
+        "_no_sep_normalized": sep,
+        "_sep_valid": True,
+    }
+
+
+def _make_folder_entry(sep: str, *, day: str = "05") -> dict:
+    return build_file_entry(
+        f"folder/{day}/{sep}.pdf",
+        local_path=f"/abs/folder/{day}/{sep}.pdf",
+        source="folder",
+        is_index_source=True,
+        is_content_source=True,
+    )
+
+
+class TestBuildFileReviewWithIcdCheck:
+    def test_all_codes_present_is_lengkap(self):
+        sep = "0132R0770626V000060"
+        claims = pd.DataFrame([_make_claim(sep)])
+        files = pd.DataFrame([_make_folder_entry(sep)])
+        icd_results = {sep: FirstPageCodeCheckResult(readable=True, icd10_missing=[], icd9_missing=[])}
+
+        review_df, _, _ = build_file_review(claims, files, icd_check_results=icd_results)
+
+        assert review_df.loc[0, "Status Akhir"] == STATUS_LENGKAP
+        assert review_df.loc[0, "ICD-10 Sesuai"] == "Ya"
+        assert review_df.loc[0, "ICD-9-CM Sesuai"] == "Ya"
+        assert list(review_df.columns) == FILE_REVIEW_ICD_COLUMNS
+
+    def test_missing_icd10_code_downgrades_status(self):
+        sep = "0132R0770626V000061"
+        claims = pd.DataFrame([_make_claim(sep)])
+        files = pd.DataFrame([_make_folder_entry(sep)])
+        icd_results = {sep: FirstPageCodeCheckResult(readable=True, icd10_missing=["E86"], icd9_missing=[])}
+
+        review_df, _, summary = build_file_review(claims, files, icd_check_results=icd_results)
+
+        assert review_df.loc[0, "Status Akhir"] == STATUS_ICD_TIDAK_SESUAI
+        assert review_df.loc[0, "ICD-10 Sesuai"] == "Tidak"
+        assert "E86" in review_df.loc[0, "Kode Tidak Ditemukan di PDF"]
+        assert "E86" in review_df.loc[0, "Catatan"]
+        assert summary["Kode ICD tidak sesuai"] == 1
+
+    def test_unreadable_pdf_downgrades_with_note(self):
+        sep = "0132R0770626V000062"
+        claims = pd.DataFrame([_make_claim(sep)])
+        files = pd.DataFrame([_make_folder_entry(sep)])
+        icd_results = {
+            sep: FirstPageCodeCheckResult(
+                readable=False,
+                icd10_missing=["A09.9", "E86"],
+                icd9_missing=["90.59"],
+                error="PDF gagal dibuka.",
+            )
+        }
+
+        review_df, _, _ = build_file_review(claims, files, icd_check_results=icd_results)
+
+        assert review_df.loc[0, "Status Akhir"] == STATUS_ICD_TIDAK_SESUAI
+        assert review_df.loc[0, "ICD-10 Sesuai"] == "Tidak"
+        assert review_df.loc[0, "ICD-9-CM Sesuai"] == "Tidak"
+        assert "tidak dapat dibaca" in review_df.loc[0, "Catatan"].lower()
+
+    def test_duplikat_status_wins_over_icd_check(self):
+        sep = "0132R0770626V000063"
+        claims = pd.DataFrame([_make_claim(sep)])
+        files = pd.DataFrame(
+            [
+                build_file_entry(
+                    f"folder/05/{sep}_a.pdf",
+                    local_path=f"/abs/folder/05/{sep}_a.pdf",
+                    source="folder",
+                    is_index_source=True,
+                    is_content_source=True,
+                ),
+                build_file_entry(
+                    f"folder/05/{sep}_b.pdf",
+                    local_path=f"/abs/folder/05/{sep}_b.pdf",
+                    source="folder",
+                    is_index_source=True,
+                    is_content_source=True,
+                ),
+            ]
+        )
+        icd_results = {sep: FirstPageCodeCheckResult(readable=True, icd10_missing=["E86"], icd9_missing=[])}
+
+        review_df, _, _ = build_file_review(claims, files, icd_check_results=icd_results)
+
+        assert review_df.loc[0, "Status Akhir"] == STATUS_DUPLIKAT
+
+    def test_salah_folder_status_wins_over_icd_check(self):
+        sep = "0132R0770626V000064"
+        claims = pd.DataFrame([_make_claim(sep, tanggal_pulang="2026-06-06")])
+        files = pd.DataFrame([_make_folder_entry(sep, day="05")])
+        icd_results = {sep: FirstPageCodeCheckResult(readable=True, icd10_missing=["E86"], icd9_missing=[])}
+
+        review_df, _, _ = build_file_review(claims, files, icd_check_results=icd_results)
+
+        assert review_df.loc[0, "Status Akhir"] == STATUS_SALAH_FOLDER
+
+    def test_sep_missing_from_icd_results_is_not_penalized(self):
+        sep = "0132R0770626V000065"
+        claims = pd.DataFrame([_make_claim(sep)])
+        files = pd.DataFrame([_make_folder_entry(sep)])
+
+        review_df, _, _ = build_file_review(claims, files, icd_check_results={})
+
+        assert review_df.loc[0, "Status Akhir"] == STATUS_LENGKAP
+
+    def test_no_icd_check_keeps_original_columns(self):
+        sep = "0132R0770626V000066"
+        claims = pd.DataFrame([_make_claim(sep)])
+        files = pd.DataFrame([_make_folder_entry(sep)])
+
+        review_df, _, summary = build_file_review(claims, files)
+
+        assert list(review_df.columns) == FILE_REVIEW_COLUMNS
+        assert "Kode ICD tidak sesuai" not in summary

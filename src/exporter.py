@@ -14,6 +14,7 @@ STATUS_FILLS = {
     "Salah Folder": "F4B183",
     "Duplikat": "D9EAD3",
     "Perlu Review Manual": "D9E1F2",
+    "Kode ICD Tidak Sesuai": "E6CFF2",
 }
 
 
