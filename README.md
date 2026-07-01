@@ -1,6 +1,6 @@
 # Casemix File Auditor
 
-Aplikasi web lokal untuk membantu tim casemix rumah sakit mereview berkas klaim JKN sebelum diajukan. Aplikasi memisahkan tiga proses kerja: analisis TXT e-Klaim, review kelengkapan jumlah berkas, dan review kelengkapan isi berkas.
+Aplikasi web lokal untuk membantu tim casemix rumah sakit mereview berkas klaim JKN sebelum diajukan. Aplikasi memisahkan empat proses kerja: analisis TXT e-Klaim, review kelengkapan jumlah berkas, review kelengkapan isi berkas, dan merge/susun ulang PDF berkas.
 
 Data diproses lokal di komputer user. Data klaim pasien tidak dikirim ke cloud. Aplikasi hanya memeriksa metadata versi terbaru dari GitHub saat fitur cek pembaruan dijalankan.
 
@@ -148,6 +148,33 @@ Hasil Scan dideteksi dari keberadaan gambar/halaman scan di PDF, bukan dari pemb
 Review isi berkas tidak membutuhkan Excel atau `list_berkas_klaim.txt`. Hasilnya satu baris per PDF yang diperiksa.
 
 Output export: `hasil_review_isi_berkas.xlsx`.
+
+### 3. Merge PDF Berkas
+
+Fitur ini menggabungkan PDF dari dua folder sumber berdasarkan nama file yang sama. Aplikasi hanya memproses file `.pdf` yang ada di kedua folder; file yang hanya ada di salah satu folder atau nama file duplikat dalam satu sumber akan dicatat sebagai `Dilewati`.
+
+Input:
+
+- Folder Sumber A.
+- Folder Sumber B.
+- Folder Output.
+- Opsi `Timpa file output jika sudah ada`.
+
+Output berupa satu PDF baru per pasangan file, disimpan ke Folder Output dengan nama file yang sama. File sumber tidak diubah.
+
+Urutan halaman hasil merge:
+
+1. LIP.
+2. SEP.
+3. Resume Medis.
+4. Triage.
+5. Surat Perintah Rawat Inap.
+6. Hasil Pemeriksaan.
+7. Pemeriksaan Radiologi.
+8. Rincian Tagihan.
+9. Sisa halaman lain.
+
+Klasifikasi halaman memakai teks digital terlebih dahulu. Jika halaman scan tidak memiliki teks digital yang cukup, aplikasi mencoba OCR otomatis bila dependency OCR sudah tersedia. Jika OCR tidak tersedia atau gagal, halaman tetap digabungkan tetapi masuk kategori `Sisa` dan catatan laporan akan menandai masalahnya.
 
 ## Akses Domain Cloudflare
 

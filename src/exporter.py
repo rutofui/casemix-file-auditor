@@ -15,6 +15,9 @@ STATUS_FILLS = {
     "Duplikat": "D9EAD3",
     "Perlu Review Manual": "D9E1F2",
     "Kode ICD Tidak Sesuai": "E6CFF2",
+    "Berhasil": "C6EFCE",
+    "Dilewati": "FFEB9C",
+    "Gagal": "FFC7CE",
 }
 
 
@@ -43,6 +46,26 @@ def export_review_to_excel(
         for worksheet in workbook.worksheets:
             format_worksheet(worksheet)
 
+    return output.getvalue()
+
+
+def export_table_to_excel(
+    df: pd.DataFrame,
+    summary: dict[str, int] | None = None,
+    *,
+    sheet_name: str = "hasil",
+) -> bytes:
+    output = BytesIO()
+    summary = summary or {}
+    summary_df = pd.DataFrame(
+        [{"Metrik": key, "Nilai": value} for key, value in summary.items()]
+    )
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, sheet_name=sheet_name[:31], index=False)
+        summary_df.to_excel(writer, sheet_name="ringkasan", index=False)
+        workbook = writer.book
+        for worksheet in workbook.worksheets:
+            format_worksheet(worksheet)
     return output.getvalue()
 
 

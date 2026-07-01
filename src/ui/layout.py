@@ -58,6 +58,7 @@ def inject_layout_styles() -> None:
         .file-panel    { background: linear-gradient(130deg, #0f766e 0%, #0d9488 100%); }
         .content-panel { background: linear-gradient(130deg, #9a3412 0%, #c2410c 100%); }
         .txt-panel     { background: linear-gradient(130deg, #1e3a8a 0%, #2563eb 100%); }
+        .merge-panel   { background: linear-gradient(130deg, #365314 0%, #65a30d 100%); }
 
         /* ── Metric cards ── */
         div[data-testid="metric-container"] {
