@@ -11,7 +11,7 @@ from src.pdf_merger import (
     build_merge_summary,
     merge_pdf_folders,
 )
-from src.ui.layout import automatic_pdf_check_config, format_elapsed, render_panel_header
+from src.ui.layout import format_elapsed, render_panel_header
 
 
 def run_pdf_merge(
@@ -37,13 +37,12 @@ def run_pdf_merge(
             f"{format_elapsed(time.perf_counter() - started_at)}"
         )
 
-    with st.spinner("Menggabungkan dan menyusun ulang PDF..."):
+    with st.spinner("Menggabungkan PDF..."):
         results = merge_pdf_folders(
             source_a,
             source_b,
             output_folder,
             overwrite=overwrite,
-            config=automatic_pdf_check_config(use_ocr=True),
             progress_callback=update_progress,
         )
 
@@ -66,7 +65,7 @@ def run_pdf_merge(
 def render_pdf_merge_tab() -> None:
     render_panel_header(
         "Merge PDF Berkas",
-        "Gabungkan PDF bernama sama dari dua folder lalu susun ulang halaman berkas klaim.",
+        "Gabungkan PDF bernama sama dari dua folder tanpa mengubah urutan halaman.",
         "merge-panel",
     )
     source_a = st.text_input(

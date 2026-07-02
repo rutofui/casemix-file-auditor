@@ -78,7 +78,7 @@ def test_merge_skips_duplicate_basename_in_one_source() -> None:
         assert "duplikat" in " ".join(results[0].notes).lower()
 
 
-def test_merge_orders_pages_by_claim_document_category() -> None:
+def test_merge_appends_source_a_then_source_b_without_reordering_pages() -> None:
     with tempfile.TemporaryDirectory() as temp_dir:
         root = Path(temp_dir)
         source_a = root / "a"
@@ -112,13 +112,13 @@ def test_merge_orders_pages_by_claim_document_category() -> None:
         assert results[0].status == "Berhasil"
         output_pages = _read_pdf_pages(output / "claim.pdf")
         expected_markers = [
-            "Berkas Klaim Individual Pasien",
             "SURAT ELIGIBILITAS PESERTA",
             "RESUME MEDIS",
-            "HASIL PEMERIKSAAN LABORATORIUM",
-            "PEMERIKSAAN RADIOLOGI",
-            "Rincian Tagihan",
             "CATATAN LAIN",
+            "Berkas Klaim Individual Pasien",
+            "PEMERIKSAAN RADIOLOGI",
+            "HASIL PEMERIKSAAN LABORATORIUM",
+            "Rincian Tagihan",
         ]
         assert [marker in text for marker, text in zip(expected_markers, output_pages)] == [
             True,
@@ -129,6 +129,7 @@ def test_merge_orders_pages_by_claim_document_category() -> None:
             True,
             True,
         ]
+        assert results[0].total_pages == 7
 
 
 def test_merge_respects_overwrite_policy() -> None:

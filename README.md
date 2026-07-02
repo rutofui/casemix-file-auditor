@@ -1,6 +1,6 @@
 # Casemix File Auditor
 
-Aplikasi web lokal untuk membantu tim casemix rumah sakit mereview berkas klaim JKN sebelum diajukan. Aplikasi memisahkan beberapa proses kerja: analisis TXT e-Klaim, review kelengkapan jumlah berkas, review kelengkapan isi berkas, merge/susun ulang PDF berkas, dan rename PDF berdasarkan SEP.
+Aplikasi web lokal untuk membantu tim casemix rumah sakit mereview berkas klaim JKN sebelum diajukan. Aplikasi memisahkan beberapa proses kerja: analisis TXT e-Klaim, review kelengkapan jumlah berkas, review kelengkapan isi berkas, merge PDF berkas, dan rename PDF berdasarkan SEP.
 
 Data diproses lokal di komputer user. Data klaim pasien tidak dikirim ke cloud. Aplikasi hanya memeriksa metadata versi terbaru dari GitHub saat fitur cek pembaruan dijalankan.
 
@@ -163,21 +163,9 @@ Input:
 - Folder Output.
 - Opsi `Timpa file output jika sudah ada`.
 
-Output berupa satu PDF baru per pasangan file, disimpan ke Folder Output dengan nama file yang sama. File sumber tidak diubah.
+Output berupa satu PDF baru per pasangan file, disimpan ke Folder Output dengan nama file yang sama. File sumber tidak diubah. Urutan halaman tidak diubah: semua halaman dari Folder Sumber A dimasukkan terlebih dahulu sesuai urutan asli, lalu semua halaman dari Folder Sumber B sesuai urutan asli.
 
-Urutan halaman hasil merge:
-
-1. LIP.
-2. SEP.
-3. Resume Medis.
-4. Triage.
-5. Surat Perintah Rawat Inap.
-6. Hasil Pemeriksaan.
-7. Pemeriksaan Radiologi.
-8. Rincian Tagihan.
-9. Sisa halaman lain.
-
-Klasifikasi halaman memakai teks digital terlebih dahulu. Jika halaman scan tidak memiliki teks digital yang cukup, aplikasi mencoba OCR otomatis bila dependency OCR sudah tersedia. Jika OCR tidak tersedia atau gagal, halaman tetap digabungkan tetapi masuk kategori `Sisa` dan catatan laporan akan menandai masalahnya.
+Fitur merge tidak membaca isi PDF, tidak menjalankan OCR, dan tidak mengklasifikasi atau menyusun ulang halaman.
 
 ### 4. Rename PDF SEP
 
