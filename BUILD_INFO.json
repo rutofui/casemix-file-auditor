@@ -1,5 +1,5 @@
 {
-  "built_at": "2026-07-02T09:15:37+07:00",
-  "commit_sha": "b5f4b6f",
-  "commit_message": "add lip metadata checks for txt review"
+  "built_at": "2026-07-02T10:30:21+07:00",
+  "commit_sha": "be422eb",
+  "commit_message": "fix lip metadata parallel worker on windows"
 }
