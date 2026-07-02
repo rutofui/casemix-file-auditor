@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, ThreadPoolExecutor, wait
 import os
 import traceback
 from typing import Callable, Iterable
@@ -242,7 +242,7 @@ def check_lip_metadata_parallel(
         )
 
     results: dict[str, LipMetadataCheckResult] = {}
-    with ProcessPoolExecutor(max_workers=worker_count) as executor:
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
         futures = {
             executor.submit(
                 _check_lip_metadata_worker,

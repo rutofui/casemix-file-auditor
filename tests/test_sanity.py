@@ -619,6 +619,28 @@ def test_check_lip_metadata_parallel_matches_serial_results() -> None:
         assert parallel_results[sep].kelas_perawatan_match == serial_results[sep].kelas_perawatan_match
 
 
+def test_check_lip_metadata_parallel_uses_multi_worker_thread_path(monkeypatch) -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        pdf_paths = [root / f"lip_{index}.pdf" for index in range(3)]
+        for index, pdf_path in enumerate(pdf_paths, start=1):
+            _write_pdf(
+                pdf_path,
+                f"LIP\nTanggal Masuk : 0{index}/06/2026\nTanggal Keluar : 05/06/2026\nKelas : {index}",
+            )
+        jobs = [
+            (f"sep_{index}", [str(pdf_path)], f"2026-06-0{index}", "2026-06-05", str(index))
+            for index, pdf_path in enumerate(pdf_paths, start=1)
+        ]
+
+        monkeypatch.setattr("src.pdf_parallel.automatic_pdf_worker_count", lambda total: 3)
+        results = check_lip_metadata_parallel(jobs)
+
+    assert set(results) == {"sep_1", "sep_2", "sep_3"}
+    assert all(result.readable for result in results.values())
+    assert all(result.tanggal_masuk_match is True for result in results.values())
+
+
 def test_content_review_columns_and_requirements_differ_for_ocr_mode() -> None:
     sep = "0132R0770526V001270"
     entry = build_file_entry(
