@@ -1,5 +1,5 @@
 {
-  "built_at": "2026-07-02T16:06:47+07:00",
-  "commit_sha": "f6b6fdd",
-  "commit_message": "add sep based pdf rename workflow"
+  "built_at": "2026-07-02T16:42:50+07:00",
+  "commit_sha": "d162c90",
+  "commit_message": "simplify pdf merge without page reordering"
 }
