@@ -15,6 +15,7 @@ STATUS_FILLS = {
     "Duplikat": "D9EAD3",
     "Perlu Review Manual": "D9E1F2",
     "Kode ICD Tidak Sesuai": "E6CFF2",
+    "Data LIP Tidak Sesuai": "FCE4D6",
     "Berhasil": "C6EFCE",
     "Dilewati": "FFEB9C",
     "Gagal": "FFC7CE",

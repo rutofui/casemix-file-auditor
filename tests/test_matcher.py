@@ -6,6 +6,8 @@ import pytest
 from src.config import (
     FILE_REVIEW_COLUMNS,
     FILE_REVIEW_ICD_COLUMNS,
+    FILE_REVIEW_TXT_COLUMNS,
+    STATUS_DATA_LIP_TIDAK_SESUAI,
     STATUS_DUPLIKAT,
     STATUS_FOLDER_SALAH,
     STATUS_FOLDER_SESUAI,
@@ -21,6 +23,7 @@ from src.matcher import (
     build_orphan_pdf_table,
 )
 from src.pdf_checker import FirstPageCodeCheckResult
+from src.pdf_checker import LipMetadataCheckResult
 from src.parser_file_list import build_file_entry
 
 
@@ -181,10 +184,18 @@ class TestBuildOrphanPdfTable:
 # ---------------------------------------------------------------------------
 
 
-def _make_claim(sep: str, *, tanggal_pulang: str = "2026-06-05") -> dict:
+def _make_claim(
+    sep: str,
+    *,
+    tanggal_masuk: str = "",
+    tanggal_pulang: str = "2026-06-05",
+    kelas_perawatan: str = "",
+) -> dict:
     return {
         "No SEP": sep,
+        "Tanggal Masuk": tanggal_masuk,
         "Tanggal Pulang": tanggal_pulang,
+        "Kelas Perawatan": kelas_perawatan,
         "No RM": "RM001",
         "Nama Pasien": "Pasien A",
         "Diagnosa": "A09.9;E86",
@@ -306,3 +317,52 @@ class TestBuildFileReviewWithIcdCheck:
 
         assert list(review_df.columns) == FILE_REVIEW_COLUMNS
         assert "Kode ICD tidak sesuai" not in summary
+
+
+class TestBuildFileReviewWithLipMetadata:
+    def test_matching_lip_metadata_keeps_lengkap(self):
+        sep = "0132R0770626V000070"
+        claims = pd.DataFrame([_make_claim(sep, tanggal_masuk="2026-06-01", kelas_perawatan="Kelas II")])
+        files = pd.DataFrame([_make_folder_entry(sep)])
+        lip_results = {
+            sep: LipMetadataCheckResult(
+                readable=True,
+                tanggal_masuk_lip="01/06/2026",
+                tanggal_keluar_lip="05/06/2026",
+                kelas_perawatan_lip="Kelas 2",
+                tanggal_masuk_match=True,
+                tanggal_keluar_match=True,
+                kelas_perawatan_match=True,
+            )
+        }
+
+        review_df, _, summary = build_file_review(claims, files, lip_metadata_results=lip_results)
+
+        assert review_df.loc[0, "Status Akhir"] == STATUS_LENGKAP
+        assert review_df.loc[0, "Tanggal Masuk Sesuai"] == "Ya"
+        assert review_df.loc[0, "Kelas Perawatan Sesuai"] == "Ya"
+        assert list(review_df.columns) == FILE_REVIEW_TXT_COLUMNS
+        assert summary["Data LIP tidak sesuai"] == 0
+
+    def test_mismatched_lip_metadata_sets_status(self):
+        sep = "0132R0770626V000071"
+        claims = pd.DataFrame([_make_claim(sep, tanggal_masuk="2026-06-01", kelas_perawatan="Kelas II")])
+        files = pd.DataFrame([_make_folder_entry(sep)])
+        lip_results = {
+            sep: LipMetadataCheckResult(
+                readable=True,
+                tanggal_masuk_lip="02/06/2026",
+                tanggal_keluar_lip="05/06/2026",
+                kelas_perawatan_lip="Kelas 3",
+                tanggal_masuk_match=False,
+                tanggal_keluar_match=True,
+                kelas_perawatan_match=False,
+            )
+        }
+
+        review_df, _, summary = build_file_review(claims, files, lip_metadata_results=lip_results)
+
+        assert review_df.loc[0, "Status Akhir"] == STATUS_DATA_LIP_TIDAK_SESUAI
+        assert review_df.loc[0, "Tanggal Masuk Sesuai"] == "Tidak"
+        assert review_df.loc[0, "Kelas Perawatan Sesuai"] == "Tidak"
+        assert summary["Data LIP tidak sesuai"] == 1

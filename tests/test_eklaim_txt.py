@@ -336,6 +336,18 @@ class TestBuildFileReviewClaims:
         assert row["_icd10_codes"] == ["A09.9", "E86"]
         assert row["_icd9_codes"] == ["90.59", "96.71"]
 
+    def test_maps_optional_lip_metadata_reference_columns(self):
+        header = HEADER + "\tADMISSION_DATE\tDISCHARGE_DATE\tKELAS_RAWAT"
+        row = _row(sep="0132R0770626V000052", ptd=PTD_RAWAT_INAP, inacbg="K-4-17-I")
+        content = io.BytesIO((header + "\n" + row + "\t2026-06-01\t2026-06-05\tKelas 2").encode("utf-8"))
+
+        df = read_eklaim_txt(content).df
+        claims = build_file_review_claims(df)
+
+        assert claims.iloc[0]["Tanggal Masuk"] == "2026-06-01"
+        assert claims.iloc[0]["Tanggal Pulang"] == "2026-06-05"
+        assert claims.iloc[0]["Kelas Perawatan"] == "Kelas 2"
+
     def test_missing_discharge_date_column_yields_blank_tanggal_pulang(self):
         # HEADER (test fixture) does not include DISCHARGE_DATE.
         df = read_eklaim_txt(
@@ -347,5 +359,15 @@ class TestBuildFileReviewClaims:
     def test_empty_input_returns_empty_dataframe_with_expected_columns(self):
         claims = build_file_review_claims(pd.DataFrame())
         assert claims.empty
-        for column in ["No SEP", "Tanggal Pulang", "No RM", "Nama Pasien", "Diagnosa", "_icd10_codes", "_icd9_codes"]:
+        for column in [
+            "No SEP",
+            "Tanggal Masuk",
+            "Tanggal Pulang",
+            "Kelas Perawatan",
+            "No RM",
+            "Nama Pasien",
+            "Diagnosa",
+            "_icd10_codes",
+            "_icd9_codes",
+        ]:
             assert column in claims.columns

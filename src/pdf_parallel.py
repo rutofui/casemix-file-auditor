@@ -6,7 +6,14 @@ import traceback
 from typing import Callable, Iterable
 
 from .config import PDFCheckConfig
-from .pdf_checker import FirstPageCodeCheckResult, PDFCheckResult, check_first_page_codes, check_pdf
+from .pdf_checker import (
+    FirstPageCodeCheckResult,
+    LipMetadataCheckResult,
+    PDFCheckResult,
+    check_first_page_codes,
+    check_lip_metadata,
+    check_pdf,
+)
 
 
 MAX_AUTO_PDF_WORKERS = 4
@@ -212,4 +219,102 @@ def _failed_first_page_result(
         icd10_missing=list(icd10_codes),
         icd9_missing=list(icd9_codes),
         error=error,
+    )
+
+
+def check_lip_metadata_parallel(
+    jobs: Iterable[tuple[str, list[str], str, str, str]],
+    *,
+    progress_callback: Callable[[int, int, str], None] | None = None,
+    tick_callback: Callable[[], None] | None = None,
+) -> dict[str, LipMetadataCheckResult]:
+    job_list = list(jobs)
+    total = len(job_list)
+    if total == 0:
+        return {}
+
+    worker_count = automatic_pdf_worker_count(total)
+    if worker_count == 1:
+        return _check_lip_metadata_serial(
+            job_list,
+            progress_callback=progress_callback,
+            tick_callback=tick_callback,
+        )
+
+    results: dict[str, LipMetadataCheckResult] = {}
+    with ProcessPoolExecutor(max_workers=worker_count) as executor:
+        futures = {
+            executor.submit(
+                _check_lip_metadata_worker,
+                sep,
+                local_paths,
+                tanggal_masuk,
+                tanggal_keluar,
+                kelas_perawatan,
+            ): sep
+            for sep, local_paths, tanggal_masuk, tanggal_keluar, kelas_perawatan in job_list
+        }
+        pending = set(futures.keys())
+        completed = 0
+        while pending:
+            done, pending = wait(pending, timeout=1.0, return_when=FIRST_COMPLETED)
+            if tick_callback is not None:
+                tick_callback()
+            for future in done:
+                completed += 1
+                sep = futures[future]
+                try:
+                    result = future.result()
+                except Exception:
+                    result = LipMetadataCheckResult(
+                        readable=False,
+                        error="Pengecekan data LIP gagal di worker paralel:\n" + traceback.format_exc(),
+                    )
+                results[sep] = result
+                if progress_callback is not None:
+                    progress_callback(completed, total, sep)
+    return results
+
+
+def _check_lip_metadata_serial(
+    jobs: list[tuple[str, list[str], str, str, str]],
+    *,
+    progress_callback: Callable[[int, int, str], None] | None = None,
+    tick_callback: Callable[[], None] | None = None,
+) -> dict[str, LipMetadataCheckResult]:
+    results: dict[str, LipMetadataCheckResult] = {}
+    total = len(jobs)
+    for completed, (sep, local_paths, tanggal_masuk, tanggal_keluar, kelas_perawatan) in enumerate(jobs, start=1):
+        if tick_callback is not None:
+            tick_callback()
+        try:
+            result = check_lip_metadata(
+                local_paths,
+                expected_tanggal_masuk=tanggal_masuk,
+                expected_tanggal_keluar=tanggal_keluar,
+                expected_kelas_perawatan=kelas_perawatan,
+            )
+        except Exception:
+            result = LipMetadataCheckResult(
+                readable=False,
+                error="Pengecekan data LIP gagal:\n" + traceback.format_exc(),
+            )
+        results[sep] = result
+        if progress_callback is not None:
+            progress_callback(completed, total, sep)
+    return results
+
+
+def _check_lip_metadata_worker(
+    sep: str,
+    local_paths: list[str],
+    tanggal_masuk: str,
+    tanggal_keluar: str,
+    kelas_perawatan: str,
+) -> LipMetadataCheckResult:
+    return check_lip_metadata(
+        local_paths,
+        expected_tanggal_masuk=tanggal_masuk,
+        expected_tanggal_keluar=tanggal_keluar,
+        expected_kelas_perawatan=kelas_perawatan,
     )

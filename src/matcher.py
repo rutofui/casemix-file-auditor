@@ -9,6 +9,7 @@ from .config import (
     CONTENT_REVIEW_COLUMNS,
     FILE_REVIEW_COLUMNS,
     FILE_REVIEW_ICD_COLUMNS,
+    FILE_REVIEW_TXT_COLUMNS,
     NO,
     OCR_CONTENT_REVIEW_COLUMNS,
     OCR_REQUIRED_COMPONENTS,
@@ -21,6 +22,7 @@ from .config import (
     STATUS_FOLDER_TIDAK_ADA_FILE,
     STATUS_FOLDER_TIDAK_TERDETEKSI,
     STATUS_ICD_TIDAK_SESUAI,
+    STATUS_DATA_LIP_TIDAK_SESUAI,
     STATUS_KURANG_KOMPONEN,
     STATUS_KURANG_PDF,
     STATUS_LENGKAP,
@@ -35,6 +37,7 @@ def build_file_review(
     claims_df: pd.DataFrame,
     file_entries_df: pd.DataFrame,
     icd_check_results: dict[str, Any] | None = None,
+    lip_metadata_results: dict[str, Any] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, int]]:
     file_entries = file_entries_df.copy() if file_entries_df is not None else pd.DataFrame()
     index_entries = (
@@ -46,13 +49,26 @@ def build_file_review(
         claims_df.loc[claims_df["_sep_valid"].astype(bool), "_no_sep_normalized"].dropna().astype(str)
     )
     rows = [
-        _review_one_file_count(claim=claim, index_entries=index_entries, icd_check_results=icd_check_results)
+        _review_one_file_count(
+            claim=claim,
+            index_entries=index_entries,
+            icd_check_results=icd_check_results,
+            lip_metadata_results=lip_metadata_results,
+        )
         for _, claim in claims_df.iterrows()
     ]
-    columns = FILE_REVIEW_ICD_COLUMNS if icd_check_results is not None else FILE_REVIEW_COLUMNS
+    columns = FILE_REVIEW_TXT_COLUMNS if lip_metadata_results is not None else (
+        FILE_REVIEW_ICD_COLUMNS if icd_check_results is not None else FILE_REVIEW_COLUMNS
+    )
     review_df = pd.DataFrame(rows, columns=columns)
     orphan_df = build_orphan_pdf_table(index_entries, valid_claim_seps)
-    summary = build_file_summary(review_df, claims_df, orphan_df, icd_check_active=icd_check_results is not None)
+    summary = build_file_summary(
+        review_df,
+        claims_df,
+        orphan_df,
+        icd_check_active=icd_check_results is not None,
+        lip_check_active=lip_metadata_results is not None,
+    )
     return review_df, orphan_df, summary
 
 
@@ -115,6 +131,7 @@ def build_file_summary(
     orphan_df: pd.DataFrame,
     *,
     icd_check_active: bool = False,
+    lip_check_active: bool = False,
 ) -> dict[str, int]:
     if review_df.empty:
         summary = {
@@ -129,6 +146,8 @@ def build_file_summary(
         }
         if icd_check_active:
             summary["Kode ICD tidak sesuai"] = 0
+        if lip_check_active:
+            summary["Data LIP tidak sesuai"] = 0
         return summary
     summary = {
         "Total klaim": int(len(review_df)),
@@ -142,6 +161,8 @@ def build_file_summary(
     }
     if icd_check_active:
         summary["Kode ICD tidak sesuai"] = int((review_df["Status Akhir"] == STATUS_ICD_TIDAK_SESUAI).sum())
+    if lip_check_active:
+        summary["Data LIP tidak sesuai"] = int((review_df["Status Akhir"] == STATUS_DATA_LIP_TIDAK_SESUAI).sum())
     return summary
 
 
@@ -217,6 +238,7 @@ def _review_one_file_count(
     claim: pd.Series,
     index_entries: pd.DataFrame,
     icd_check_results: dict[str, Any] | None = None,
+    lip_metadata_results: dict[str, Any] | None = None,
 ) -> dict[str, object]:
     sep = str(claim.get("_no_sep_normalized", "") or "")
     sep_valid = bool(claim.get("_sep_valid", False))
@@ -242,6 +264,14 @@ def _review_one_file_count(
         final_status = STATUS_SALAH_FOLDER
     elif row["Status Folder"] == STATUS_FOLDER_TIDAK_TERDETEKSI:
         final_status = STATUS_REVIEW_MANUAL
+    elif lip_metadata_results is not None:
+        final_status = _apply_lip_metadata_check(row, sep, lip_metadata_results, notes)
+        if final_status == STATUS_LENGKAP and icd_check_results is not None:
+            final_status = _apply_icd_check(row, sep, icd_check_results, notes)
+        elif icd_check_results is not None:
+            icd_status = _apply_icd_check(row, sep, icd_check_results, notes)
+            if icd_status == STATUS_ICD_TIDAK_SESUAI:
+                final_status = icd_status
     elif icd_check_results is not None:
         final_status = _apply_icd_check(row, sep, icd_check_results, notes)
     else:
@@ -250,6 +280,51 @@ def _review_one_file_count(
     row["Status Akhir"] = final_status
     row["Catatan"] = " ".join(_unique_non_empty(notes))
     return row
+
+
+def _apply_lip_metadata_check(
+    row: dict[str, object],
+    sep: str,
+    lip_metadata_results: dict[str, Any],
+    notes: list[str],
+) -> str:
+    result = lip_metadata_results.get(sep)
+    if result is None:
+        notes.append("Data LIP tidak diperiksa karena path PDF lokal tidak tersedia.")
+        return STATUS_REVIEW_MANUAL
+
+    readable = bool(_result_value(result, "readable", False))
+    row["Tanggal Masuk LIP"] = _result_value(result, "tanggal_masuk_lip", "") or ""
+    row["Tanggal Keluar LIP"] = _result_value(result, "tanggal_keluar_lip", "") or ""
+    row["Kelas Perawatan LIP"] = _result_value(result, "kelas_perawatan_lip", "") or ""
+
+    mismatch = False
+    for result_key, column, label in [
+        ("tanggal_masuk_match", "Tanggal Masuk Sesuai", "Tanggal masuk"),
+        ("tanggal_keluar_match", "Tanggal Keluar Sesuai", "Tanggal keluar"),
+        ("kelas_perawatan_match", "Kelas Perawatan Sesuai", "Kelas perawatan"),
+    ]:
+        match_value = _result_value(result, result_key, None)
+        if match_value is None:
+            row[column] = "-"
+            continue
+        row[column] = bool_to_ya_tidak(bool(match_value))
+        if not match_value:
+            mismatch = True
+            notes.append(f"{label} di LIP tidak sesuai dengan TXT E-Klaim.")
+
+    error = _result_value(result, "error", "")
+    if error:
+        notes.append(str(error))
+    for note in _result_value(result, "notes", []) or []:
+        if note:
+            notes.append(str(note))
+
+    if not readable:
+        return STATUS_REVIEW_MANUAL
+    if mismatch:
+        return STATUS_DATA_LIP_TIDAK_SESUAI
+    return STATUS_LENGKAP
 
 
 def _apply_icd_check(
@@ -372,7 +447,9 @@ def _review_one_pdf_content(
 def _base_file_row(claim: pd.Series, sep: str) -> dict[str, object]:
     return {
         "No SEP": sep or str(claim.get("No SEP", "") or ""),
+        "Tanggal Masuk": claim.get("Tanggal Masuk", ""),
         "Tanggal Pulang": claim.get("Tanggal Pulang", ""),
+        "Kelas Perawatan": claim.get("Kelas Perawatan", ""),
         "No RM": claim.get("No RM", ""),
         "Nama Pasien": claim.get("Nama Pasien", ""),
         "Diagnosa": claim.get("Diagnosa", ""),
@@ -385,6 +462,12 @@ def _base_file_row(claim: pd.Series, sep: str) -> dict[str, object]:
         "ICD-10 Sesuai": "-",
         "ICD-9-CM Sesuai": "-",
         "Kode Tidak Ditemukan di PDF": "",
+        "Tanggal Masuk LIP": "",
+        "Tanggal Keluar LIP": "",
+        "Kelas Perawatan LIP": "",
+        "Tanggal Masuk Sesuai": "-",
+        "Tanggal Keluar Sesuai": "-",
+        "Kelas Perawatan Sesuai": "-",
         "Catatan": "",
     }
 

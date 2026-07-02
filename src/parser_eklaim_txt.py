@@ -112,7 +112,9 @@ def build_file_review_claims(df: pd.DataFrame) -> pd.DataFrame:
     """
     columns = [
         "No SEP",
+        "Tanggal Masuk",
         "Tanggal Pulang",
+        "Kelas Perawatan",
         "No RM",
         "Nama Pasien",
         "Diagnosa",
@@ -127,10 +129,9 @@ def build_file_review_claims(df: pd.DataFrame) -> pd.DataFrame:
 
     out = pd.DataFrame(index=df.index)
     out["No SEP"] = df["SEP"].map(_safe_string)
-    if "DISCHARGE_DATE" in df.columns:
-        out["Tanggal Pulang"] = df["DISCHARGE_DATE"].map(_safe_string)
-    else:
-        out["Tanggal Pulang"] = ""
+    out["Tanggal Masuk"] = _optional_series(df, ["ADMISSION_DATE", "TANGGAL_MASUK", "TGL_MASUK", "TANGGAL_REGISTRASI"])
+    out["Tanggal Pulang"] = _optional_series(df, ["DISCHARGE_DATE", "TANGGAL_KELUAR", "TGL_KELUAR", "TANGGAL_PULANG", "TGL_PULANG"])
+    out["Kelas Perawatan"] = _optional_series(df, ["KELAS_RAWAT", "KELAS_PERAWATAN", "KELAS", "KELAS_RS", "HAK_KELAS"])
     out["No RM"] = df["MRN"].map(_safe_string)
     out["Nama Pasien"] = df["NAMA_PASIEN"].map(_safe_string)
     out["Diagnosa"] = df["DIAGLIST"].map(_safe_string)
@@ -140,6 +141,13 @@ def build_file_review_claims(df: pd.DataFrame) -> pd.DataFrame:
     out["_icd10_codes"] = df["DIAGLIST"].map(split_codes)
     out["_icd9_codes"] = df["PROCLIST"].map(split_codes)
     return out[columns]
+
+
+def _optional_series(df: pd.DataFrame, aliases: list[str]) -> pd.Series:
+    for column in aliases:
+        if column in df.columns:
+            return df[column].map(_safe_string)
+    return pd.Series([""] * len(df), index=df.index)
 
 
 def _safe_string(value: object) -> str:

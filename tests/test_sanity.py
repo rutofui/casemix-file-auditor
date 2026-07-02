@@ -14,11 +14,12 @@ from src.pdf_parallel import (
     MAX_OCR_PDF_WORKERS,
     automatic_pdf_worker_count,
     check_first_page_codes_parallel,
+    check_lip_metadata_parallel,
     check_pdfs_parallel,
     resolve_pdf_worker_count,
 )
 from src.config import detect_document_titles, detect_document_titles_from_pages
-from src.pdf_checker import check_first_page_codes, check_pdf
+from src.pdf_checker import check_first_page_codes, check_lip_metadata, check_pdf
 
 
 
@@ -543,6 +544,79 @@ def test_check_first_page_codes_parallel_matches_serial_results() -> None:
             assert parallel_results[sep].readable == serial_results[sep].readable
             assert parallel_results[sep].icd10_missing == serial_results[sep].icd10_missing
             assert parallel_results[sep].icd9_missing == serial_results[sep].icd9_missing
+
+
+def test_check_lip_metadata_matches_dates_and_care_class() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        pdf_path = Path(temp_dir) / "lip.pdf"
+        _write_pdf(
+            pdf_path,
+            "\n".join(
+                [
+                    "BERKAS KLAIM INDIVIDUAL PASIEN",
+                    "Tanggal Masuk : 01/06/2026",
+                    "Tanggal Keluar : 05/06/2026",
+                    "Kelas Perawatan : Kelas II",
+                ]
+            ),
+        )
+
+        result = check_lip_metadata(
+            [str(pdf_path)],
+            expected_tanggal_masuk="2026-06-01",
+            expected_tanggal_keluar="2026-06-05",
+            expected_kelas_perawatan="2",
+        )
+
+    assert result.readable is True
+    assert result.tanggal_masuk_match is True
+    assert result.tanggal_keluar_match is True
+    assert result.kelas_perawatan_match is True
+
+
+def test_check_lip_metadata_detects_mismatch() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        pdf_path = Path(temp_dir) / "lip.pdf"
+        _write_pdf(
+            pdf_path,
+            "Lembar Individual Pasien\nTanggal Masuk : 02/06/2026\nTanggal Keluar : 05/06/2026\nKelas : Kelas III",
+        )
+
+        result = check_lip_metadata(
+            [str(pdf_path)],
+            expected_tanggal_masuk="2026-06-01",
+            expected_tanggal_keluar="2026-06-05",
+            expected_kelas_perawatan="Kelas II",
+        )
+
+    assert result.tanggal_masuk_match is False
+    assert result.tanggal_keluar_match is True
+    assert result.kelas_perawatan_match is False
+
+
+def test_check_lip_metadata_parallel_matches_serial_results() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        path_a = root / "a.pdf"
+        path_b = root / "b.pdf"
+        _write_pdf(path_a, "LIP\nTanggal Masuk : 01/06/2026\nTanggal Keluar : 05/06/2026\nKelas : 1")
+        _write_pdf(path_b, "LIP\nTanggal Masuk : 02/06/2026\nTanggal Keluar : 06/06/2026\nKelas : 2")
+        jobs = [
+            ("sep_a", [str(path_a)], "2026-06-01", "2026-06-05", "Kelas I"),
+            ("sep_b", [str(path_b)], "2026-06-02", "2026-06-06", "Kelas II"),
+        ]
+
+        serial_results = {
+            sep: check_lip_metadata(paths, expected_tanggal_masuk=tm, expected_tanggal_keluar=tk, expected_kelas_perawatan=kp)
+            for sep, paths, tm, tk, kp in jobs
+        }
+        parallel_results = check_lip_metadata_parallel(jobs)
+
+    assert set(parallel_results) == set(serial_results)
+    for sep in serial_results:
+        assert parallel_results[sep].tanggal_masuk_match == serial_results[sep].tanggal_masuk_match
+        assert parallel_results[sep].tanggal_keluar_match == serial_results[sep].tanggal_keluar_match
+        assert parallel_results[sep].kelas_perawatan_match == serial_results[sep].kelas_perawatan_match
 
 
 def test_content_review_columns_and_requirements_differ_for_ocr_mode() -> None:

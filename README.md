@@ -99,7 +99,9 @@ Browser akan membuka aplikasi Streamlit. Jika tidak terbuka otomatis, buka URL y
 
 ### 1. Review Jumlah Berkas
 
-Proses ini hanya mencocokkan data Excel dengan daftar/path PDF. Tidak membaca isi PDF.
+Secara umum proses ini mencocokkan data klaim dengan daftar/path PDF. Untuk acuan Excel, aplikasi tidak membaca isi PDF.
+
+Jika `Sumber Acuan Klaim` memakai `TXT E-Klaim`, aplikasi juga membaca teks digital halaman LIP pada PDF yang cocok untuk memeriksa kecocokan kelas perawatan, tanggal masuk, dan tanggal keluar.
 
 Input proses ini terpisah dari review isi berkas:
 
@@ -114,6 +116,7 @@ Yang dicek:
 - PDF berada di folder tanggal yang sesuai dengan `Tanggal Pulang`.
 - Duplikat PDF berdasarkan nomor SEP.
 - PDF yang ada di folder/list tetapi SEP-nya tidak ada di Excel.
+- Khusus acuan `TXT E-Klaim`: kelas perawatan, tanggal masuk, dan tanggal keluar pada LIP sesuai dengan TXT E-Klaim.
 
 Output export: `hasil_review_jumlah_berkas.xlsx`.
 
@@ -246,6 +249,7 @@ Jika path di list berasal dari komputer Windows lain dan tidak bisa diakses dari
 - `Salah Folder`: folder tanggal tepat sebelum nama file tidak sama dengan day dari Tanggal Pulang.
 - `Duplikat`: ditemukan lebih dari satu PDF untuk nomor SEP yang sama.
 - `Perlu Review Manual`: SEP kosong/tidak valid, folder tanggal tidak terbaca, PDF rusak, PDF tidak bisa diakses, atau teks digital PDF terlalu sedikit.
+- `Data LIP Tidak Sesuai`: acuan TXT E-Klaim berbeda dengan kelas perawatan, tanggal masuk, atau tanggal keluar yang terbaca di halaman LIP.
 
 Pada tab `Review Jumlah Berkas`, status `Lengkap` berarti jumlah/path PDF sudah sesuai. Pada tab `Review Isi Berkas`, status `Lengkap` berarti komponen wajib di dalam PDF terdeteksi lengkap.
 
@@ -275,3 +279,4 @@ Komponen PDF yang dicek dengan OCR:
 - Aplikasi tidak memvalidasi tanda tangan, cap/stempel, validitas klinis resume, atau validitas medis hasil lab.
 - Aplikasi tidak memperbaiki PDF rusak dan tidak membuka file yang path-nya tidak dapat diakses oleh komputer/server Streamlit.
 - Folder tanggal diambil dari folder tepat sebelum nama file PDF. Jika struktur folder berbeda, status folder bisa menjadi `Tanggal Folder Tidak Terdeteksi`.
+- Pemeriksaan kelas/tanggal LIP pada `Review Jumlah Berkas` memakai teks digital tanpa OCR. Jika LIP berupa scan gambar tanpa teks digital, hasilnya perlu review manual.

@@ -25,6 +25,12 @@ def empty_file_icd_summary() -> dict[str, int]:
     return summary
 
 
+def empty_file_txt_summary() -> dict[str, int]:
+    summary = empty_file_icd_summary()
+    summary["Data LIP tidak sesuai"] = 0
+    return summary
+
+
 def empty_content_summary() -> dict[str, int]:
     return {
         "Total PDF": 0,

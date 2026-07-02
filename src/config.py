@@ -32,6 +32,7 @@ STATUS_SALAH_FOLDER = "Salah Folder"
 STATUS_DUPLIKAT = "Duplikat"
 STATUS_REVIEW_MANUAL = "Perlu Review Manual"
 STATUS_ICD_TIDAK_SESUAI = "Kode ICD Tidak Sesuai"
+STATUS_DATA_LIP_TIDAK_SESUAI = "Data LIP Tidak Sesuai"
 
 YES = "Ya"
 NO = "Tidak"
@@ -70,6 +71,21 @@ FILE_REVIEW_COLUMNS = [
 ]
 
 FILE_REVIEW_ICD_COLUMNS = FILE_REVIEW_COLUMNS[:-1] + [
+    "ICD-10 Sesuai",
+    "ICD-9-CM Sesuai",
+    "Kode Tidak Ditemukan di PDF",
+] + FILE_REVIEW_COLUMNS[-1:]
+
+FILE_REVIEW_TXT_COLUMNS = FILE_REVIEW_COLUMNS[:2] + [
+    "Tanggal Masuk",
+    "Kelas Perawatan",
+] + FILE_REVIEW_COLUMNS[2:-1] + [
+    "Tanggal Masuk LIP",
+    "Tanggal Keluar LIP",
+    "Kelas Perawatan LIP",
+    "Tanggal Masuk Sesuai",
+    "Tanggal Keluar Sesuai",
+    "Kelas Perawatan Sesuai",
     "ICD-10 Sesuai",
     "ICD-9-CM Sesuai",
     "Kode Tidak Ditemukan di PDF",

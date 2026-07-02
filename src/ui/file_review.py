@@ -5,15 +5,15 @@ import traceback
 
 import streamlit as st
 
-from src.config import FILE_REVIEW_COLUMNS, FILE_REVIEW_ICD_COLUMNS
+from src.config import FILE_REVIEW_COLUMNS, FILE_REVIEW_ICD_COLUMNS, FILE_REVIEW_TXT_COLUMNS
 from src.exporter import export_review_to_excel
 from src.matcher import build_file_review
 from src.parser_eklaim_txt import build_file_review_claims, read_eklaim_txt
 from src.parser_excel import read_claims_excel
 from src.ui.file_inputs import build_file_review_entries, show_file_input_warnings
 from src.ui.layout import format_elapsed, render_panel_header
-from src.ui.pdf_jobs import check_all_first_page_codes
-from src.ui.results import empty_file_icd_summary, empty_file_summary, render_review_panel
+from src.ui.pdf_jobs import check_all_first_page_codes, check_all_lip_metadata
+from src.ui.results import empty_file_icd_summary, empty_file_summary, empty_file_txt_summary, render_review_panel
 
 REFERENCE_MODE_EXCEL = "Excel"
 REFERENCE_MODE_TXT = "TXT E-Klaim"
@@ -77,6 +77,17 @@ def run_file_review(
             )
 
             run_icd_check = reference_mode == REFERENCE_MODE_TXT and source_mode == SOURCE_MODE_FOLDER
+            run_lip_check = reference_mode == REFERENCE_MODE_TXT
+            lip_results = (
+                check_all_lip_metadata(
+                    claims_df=claims_df,
+                    file_entries=file_entries,
+                    started_at=started_at,
+                    duration_status=duration_status,
+                )
+                if run_lip_check
+                else None
+            )
             icd_results = (
                 check_all_first_page_codes(
                     claims_df=claims_df,
@@ -88,7 +99,12 @@ def run_file_review(
                 else None
             )
 
-            review_df, orphan_df, summary = build_file_review(claims_df, file_entries, icd_check_results=icd_results)
+            review_df, orphan_df, summary = build_file_review(
+                claims_df,
+                file_entries,
+                icd_check_results=icd_results,
+                lip_metadata_results=lip_results,
+            )
             export_bytes = export_review_to_excel(
                 review_df,
                 orphan_df,
@@ -104,6 +120,7 @@ def run_file_review(
         st.session_state["file_export_bytes"] = export_bytes
         st.session_state["file_review_duration_sec"] = elapsed
         st.session_state["file_review_icd_check"] = icd_results is not None
+        st.session_state["file_review_lip_check"] = lip_results is not None
         st.session_state["last_review_kind"] = "file"
         st.success(f"Review jumlah berkas selesai ({format_elapsed(elapsed)}).")
     except Exception as exc:
@@ -165,6 +182,11 @@ def render_file_review_tab() -> None:
             "Mode ini juga otomatis memeriksa apakah kode ICD-10 dan ICD-9-CM di TXT "
             "tercantum di halaman pertama PDF yang cocok."
         )
+    if file_reference_mode == REFERENCE_MODE_TXT:
+        st.caption(
+            "Mode TXT E-Klaim juga memeriksa kecocokan kelas perawatan, tanggal masuk, "
+            "dan tanggal keluar pada halaman LIP PDF jika path PDF lokal dapat diakses."
+        )
     if st.button(
         "Jalankan Review Jumlah Berkas",
         type="primary",
@@ -186,7 +208,10 @@ def render_file_panel() -> None:
     if st.session_state.get("file_review_df") is None:
         return
     icd_check = bool(st.session_state.get("file_review_icd_check", False))
+    lip_check = bool(st.session_state.get("file_review_lip_check", False))
     status_options = ["Semua", "Lengkap", "Kurang PDF", "Salah Folder", "Duplikat", "Perlu Review Manual"]
+    if lip_check:
+        status_options.append("Data LIP Tidak Sesuai")
     if icd_check:
         status_options.append("Kode ICD Tidak Sesuai")
     render_review_panel(
@@ -194,8 +219,8 @@ def render_file_panel() -> None:
         summary=st.session_state.get("file_summary"),
         orphan_df=st.session_state.get("file_orphan_df"),
         export_bytes=st.session_state.get("file_export_bytes"),
-        empty_columns=FILE_REVIEW_ICD_COLUMNS if icd_check else FILE_REVIEW_COLUMNS,
-        empty_summary=empty_file_icd_summary() if icd_check else empty_file_summary(),
+        empty_columns=FILE_REVIEW_TXT_COLUMNS if lip_check else (FILE_REVIEW_ICD_COLUMNS if icd_check else FILE_REVIEW_COLUMNS),
+        empty_summary=empty_file_txt_summary() if lip_check else (empty_file_icd_summary() if icd_check else empty_file_summary()),
         status_options=status_options,
         export_file_name="hasil_review_jumlah_berkas.xlsx",
         orphan_title="PDF di folder/list tetapi tidak ada di Excel",

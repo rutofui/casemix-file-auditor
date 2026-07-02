@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import os
+import re
 
 # Must be set before Paddle/PaddleOCR import to avoid oneDNN+PIR crashes on Windows CPU.
 os.environ.setdefault("FLAGS_use_onednn", "0")
@@ -57,6 +58,92 @@ class FirstPageCodeCheckResult:
     icd10_missing: list[str] = field(default_factory=list)
     icd9_missing: list[str] = field(default_factory=list)
     error: str = ""
+
+
+@dataclass
+class LipMetadataCheckResult:
+    readable: bool = False
+    tanggal_masuk_lip: str = ""
+    tanggal_keluar_lip: str = ""
+    kelas_perawatan_lip: str = ""
+    tanggal_masuk_match: bool | None = None
+    tanggal_keluar_match: bool | None = None
+    kelas_perawatan_match: bool | None = None
+    error: str = ""
+    notes: list[str] = field(default_factory=list)
+
+
+def check_lip_metadata(
+    local_paths: list[str],
+    *,
+    expected_tanggal_masuk: str = "",
+    expected_tanggal_keluar: str = "",
+    expected_kelas_perawatan: str = "",
+) -> LipMetadataCheckResult:
+    if not local_paths:
+        return LipMetadataCheckResult(readable=False, error="Tidak ada path PDF untuk diperiksa.")
+
+    try:
+        import fitz  # PyMuPDF
+    except Exception as exc:
+        return LipMetadataCheckResult(readable=False, error=f"PyMuPDF belum tersedia: {exc}")
+
+    page_texts: list[str] = []
+    errors: list[str] = []
+    for local_path in local_paths:
+        path = Path(local_path)
+        if not local_path or not path.exists():
+            errors.append("File PDF tidak dapat diakses.")
+            continue
+        try:
+            document = fitz.open(str(path))
+        except Exception as exc:
+            errors.append(f"PDF gagal dibuka: {exc}")
+            continue
+        try:
+            max_pages = min(document.page_count, 3)
+            for page_index in range(max_pages):
+                page_texts.append(document.load_page(page_index).get_text("text") or "")
+        except Exception as exc:
+            errors.append(f"Halaman PDF gagal dibaca: {exc}")
+        finally:
+            document.close()
+
+    lip_text = _select_lip_text(page_texts)
+    if not lip_text.strip():
+        return LipMetadataCheckResult(
+            readable=False,
+            error="Halaman LIP tidak terbaca dari teks digital PDF.",
+            notes=_unique_preserve_order(errors),
+        )
+
+    detected_tanggal_masuk = _extract_labeled_date(lip_text, ["Tanggal Masuk", "Tgl Masuk", "Tgl. Masuk"])
+    detected_tanggal_keluar = _extract_labeled_date(
+        lip_text,
+        ["Tanggal Keluar", "Tgl Keluar", "Tgl. Keluar", "Tanggal Pulang", "Tgl Pulang", "Tgl. Pulang"],
+    )
+    detected_kelas = _extract_labeled_care_class(
+        lip_text,
+        ["Kelas Perawatan", "Kelas Rawat", "Hak Kelas", "Kelas", "Ruang Perawatan"],
+    )
+
+    result = LipMetadataCheckResult(
+        readable=True,
+        tanggal_masuk_lip=detected_tanggal_masuk,
+        tanggal_keluar_lip=detected_tanggal_keluar,
+        kelas_perawatan_lip=detected_kelas,
+        tanggal_masuk_match=_compare_dates(expected_tanggal_masuk, detected_tanggal_masuk),
+        tanggal_keluar_match=_compare_dates(expected_tanggal_keluar, detected_tanggal_keluar),
+        kelas_perawatan_match=_compare_care_class(expected_kelas_perawatan, detected_kelas),
+        error="; ".join(_unique_preserve_order(errors)),
+    )
+    if expected_tanggal_masuk and not detected_tanggal_masuk:
+        result.notes.append("Tanggal masuk tidak ditemukan di LIP.")
+    if expected_tanggal_keluar and not detected_tanggal_keluar:
+        result.notes.append("Tanggal keluar tidak ditemukan di LIP.")
+    if expected_kelas_perawatan and not detected_kelas:
+        result.notes.append("Kelas perawatan tidak ditemukan di LIP.")
+    return result
 
 
 def check_first_page_codes(
@@ -129,6 +216,88 @@ def check_first_page_codes(
         icd9_missing=icd9_missing,
         error="; ".join(_unique_preserve_order(errors)),
     )
+
+
+def _select_lip_text(page_texts: list[str]) -> str:
+    for text in page_texts:
+        if contains_keyword(text, LIP_KEYWORDS):
+            return text
+    return page_texts[0] if page_texts else ""
+
+
+def _extract_labeled_date(text: str, labels: list[str]) -> str:
+    for label in labels:
+        pattern = rf"{re.escape(label)}\s*[:：]?\s*([0-3]?\d[\-/ ][01]?\d[\-/ ]\d{{2,4}}|\d{{4}}[\-/ ][01]?\d[\-/ ][0-3]?\d)"
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+    return ""
+
+
+def _extract_labeled_care_class(text: str, labels: list[str]) -> str:
+    for label in labels:
+        pattern = rf"{re.escape(label)}\s*[:：]?\s*([A-Za-z0-9 .\-/]+)"
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if not match:
+            continue
+        value = re.split(r"\s{2,}|\n|\r", match.group(1).strip(), maxsplit=1)[0].strip(" .-/")
+        if value:
+            return value
+    return ""
+
+
+def _normalize_date_value(value: object) -> str:
+    if value is None or str(value).strip() == "":
+        return ""
+    try:
+        import pandas as pd
+    except Exception:
+        return ""
+    text = str(value).strip()
+    if len(text) >= 10 and text[4] in "-/" and text[7] in "-/":
+        parsed = pd.to_datetime(text, errors="coerce", dayfirst=False)
+    else:
+        parsed = pd.to_datetime(text, errors="coerce", dayfirst=True)
+        if pd.isna(parsed):
+            parsed = pd.to_datetime(text, errors="coerce", dayfirst=False)
+    if pd.isna(parsed):
+        return ""
+    return f"{int(parsed.year):04d}-{int(parsed.month):02d}-{int(parsed.day):02d}"
+
+
+def _compare_dates(expected: object, detected: object) -> bool | None:
+    expected_date = _normalize_date_value(expected)
+    if not expected_date:
+        return None
+    return expected_date == _normalize_date_value(detected)
+
+
+def _normalize_care_class(value: object) -> str:
+    text = normalize_text(value)
+    if not text:
+        return ""
+    if "VVIP" in text:
+        return "VVIP"
+    if "VIP" in text:
+        return "VIP"
+    for token in ["NICU", "PICU", "ICU", "HCU"]:
+        if contains_keyword(text, [token]):
+            return token
+    roman_map = {"III": "3", "II": "2", "I": "1"}
+    for roman, digit in roman_map.items():
+        if re.search(rf"(?<![A-Z0-9]){roman}(?![A-Z0-9])", text):
+            return digit
+    match = re.search(r"(?<!\d)([123])(?!\d)", text)
+    if match:
+        return match.group(1)
+    return text
+
+
+def _compare_care_class(expected: object, detected: object) -> bool | None:
+    expected_class = _normalize_care_class(expected)
+    if not expected_class:
+        return None
+    return expected_class == _normalize_care_class(detected)
 
 
 def _unique_preserve_order(values: list[str]) -> list[str]:
