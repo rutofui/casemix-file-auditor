@@ -1,5 +1,5 @@
 {
-  "built_at": "2026-09-24T20:16:31+07:00",
-  "commit_sha": "f6a765d",
-  "commit_message": "Remove PDF merge and rename features"
+  "built_at": "2026-09-24T21:16:51+07:00",
+  "commit_sha": "0c686f3",
+  "commit_message": "Improve claim audit accuracy and casemix workflows"
 }
