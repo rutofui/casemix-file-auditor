@@ -1,5 +1,5 @@
 {
-  "built_at": "2026-09-24T21:16:51+07:00",
-  "commit_sha": "0c686f3",
-  "commit_message": "Improve claim audit accuracy and casemix workflows"
+  "built_at": "2026-09-25T05:59:54+07:00",
+  "commit_sha": "9fd0a1e",
+  "commit_message": "Improve TXT claim analysis accuracy"
 }
