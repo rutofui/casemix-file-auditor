@@ -72,7 +72,7 @@ def read_eklaim_txt(
     df = raw_df.copy()
     for col in NUMERIC_COLUMNS:
         if col in df.columns:
-            df[f"_{col.lower()}_num"] = df[col].map(_safe_number)
+            df[f"_{col.lower()}_num"] = df[col].map(lambda value: _safe_number(value, non_negative=col in {"LOS", "ICU_INDIKATOR", "ICU_LOS", "RAWAT_INTENSIF"}))
 
     df["_sep_normalized"] = df["SEP"].map(normalize_sep)
     df["_sep_valid"] = df["_sep_normalized"].map(is_valid_sep)
@@ -177,9 +177,9 @@ def combine_eklaim_frames(
 
     ri_seps = set(ri_df.loc[ri_df["_sep_valid"], "_sep_normalized"].astype(str))
     rj_seps = set(rj_df.loc[rj_df["_sep_valid"], "_sep_normalized"].astype(str))
-    duplicate_seps = sorted(ri_seps & rj_seps)
-    if duplicate_seps:
-        warnings.append(f"Ditemukan {len(duplicate_seps)} SEP duplikat antara file Rawat Inap dan Rawat Jalan.")
+    duplicates = ri_seps & rj_seps
+    if duplicates:
+        warnings.append(f"Ditemukan {len(duplicates)} SEP duplikat antara file Rawat Inap dan Rawat Jalan.")
 
     return ri_df, rj_df, warnings
 
@@ -277,17 +277,17 @@ def normalize_dpjp(value: object) -> str:
     return text
 
 
-def _safe_number(value: object) -> float | None:
+def _safe_number(value: object, *, non_negative: bool = False) -> float | None:
     if value is None:
         return None
     text = str(value).strip()
     if not text or text.lower() in {"none", "nan", "-"}:
         return None
-    cleaned = re.sub(r"[^\d.\-]", "", text.replace(",", ""))
-    if not cleaned:
+    if not re.fullmatch(r"[+-]?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?", text):
         return None
     try:
-        return float(cleaned)
+        number = float(text.replace(",", ""))
+        return number if number == number and abs(number) != float("inf") and (not non_negative or number >= 0) else None
     except ValueError:
         return None
 

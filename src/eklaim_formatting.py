@@ -24,7 +24,7 @@ SUMMARY_TARIFF_KEYS = {
 
 
 def format_idr(value: object) -> str:
-    if value is None or value == "":
+    if value is None or value == "" or pd.isna(value):
         return ""
     try:
         amount = float(value)
@@ -39,7 +39,7 @@ def format_idr(value: object) -> str:
 
 
 def format_percentage(value: object, *, decimals: int = 2) -> str:
-    if value is None or value == "":
+    if value is None or value == "" or pd.isna(value):
         return ""
     try:
         number = float(value)
@@ -71,3 +71,7 @@ def format_analysis_frame_for_display(frame: pd.DataFrame) -> pd.DataFrame:
         elif column in PERCENTAGE_COLUMNS:
             display[column] = display[column].map(format_percentage)
     return display
+
+
+def tariff_excel_format(key: str) -> str | None:
+    return '"Rp "#,##0.00;[Red]-"Rp "#,##0.00' if key in TARIFF_COLUMNS else '0.00%' if key in PERCENTAGE_COLUMNS else None

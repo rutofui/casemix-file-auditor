@@ -296,7 +296,7 @@ def test_build_eklaim_analysis_separates_top_codes_by_care_type() -> None:
     assert analysis.top_icd9_rj_df.iloc[0]["Kode"] == "99.99"
 
 
-def test_combine_eklaim_frames_warns_duplicate_sep() -> None:
+def test_combine_eklaim_frames_warns_cross_file_duplicate_sep() -> None:
     ri = read_eklaim_txt(
         _txt_content(_row(sep="0132R0770626V000999", ptd=PTD_RAWAT_INAP, inacbg="K-4-17-I")),
         source_label="RI",
@@ -307,6 +307,58 @@ def test_combine_eklaim_frames_warns_duplicate_sep() -> None:
     )
     _, _, warnings = combine_eklaim_frames(ri, rj)
     assert any("duplikat" in warning.lower() for warning in warnings)
+
+
+def test_missing_and_invalid_numeric_values_are_reported_and_batch_continues() -> None:
+    df = read_eklaim_txt(_txt_content(
+        _row(sep="0132R0770626V000997", ptd=PTD_RAWAT_INAP, inacbg="J-1-20-III", los="",
+             total_tarif="abc", tarif_rs=""),
+        _row(sep="0132R0770626V000998", ptd=PTD_RAWAT_INAP, inacbg="J-1-20-III", los="3"),
+    )).df
+    analysis = build_eklaim_analysis(df, pd.DataFrame())
+    assert analysis.summary["Total Klaim Rawat Inap"] == 2
+    assert analysis.data_quality["Nilai Numerik Kosong"] == 2
+    assert analysis.data_quality["Nilai Numerik Tidak Valid"] == 1
+    assert set(analysis.invalid_numeric_df["Masalah"]) == {"Kosong", "Format tidak valid"}
+
+
+def test_claim_grouping_uses_ptd_and_separates_unknown_ptd() -> None:
+    mixed = read_eklaim_txt(_txt_content(
+        _row(sep="0132R0770626V000991", ptd=PTD_RAWAT_JALAN, inacbg="Q-5-44-0"),
+        _row(sep="0132R0770626V000992", ptd="9", inacbg="A-4-14-I"),
+    )).df
+    analysis = build_eklaim_analysis(mixed, pd.DataFrame())
+    assert analysis.summary["Total Klaim Rawat Jalan"] == 1
+    assert analysis.summary["Total Klaim Rawat Inap"] == 0
+    assert len(analysis.invalid_ptd_df) == 1
+
+
+def test_partial_tariffs_never_become_zero_or_produce_partial_differences() -> None:
+    df = read_eklaim_txt(_txt_content(
+        _row(sep="0132R0770626V000981", ptd=PTD_RAWAT_INAP, inacbg="K-4-17-I",
+             total_tarif="100", tarif_rs="200"),
+        _row(sep="0132R0770626V000982", ptd=PTD_RAWAT_INAP, inacbg="K-4-17-I",
+             total_tarif="", tarif_rs="300"),
+    )).df
+    analysis = build_eklaim_analysis(df, pd.DataFrame())
+    assert analysis.summary["Total Tarif Grouper (TOTAL_TARIF)"] == 100
+    assert analysis.summary["Total Tarif RS"] == 500
+    assert analysis.summary["Selisih Total Tarif RS - Grouper"] == ""
+    dpjp = analysis.dpjp_ri_df.iloc[0]
+    assert dpjp["Total Tarif Grouper"] == 100
+    assert dpjp["Selisih Rp"] == ""
+    assert any("parsial" in warning for warning in analysis.warnings)
+
+
+def test_numeric_parser_rejects_embedded_text_and_negative_los():
+    df = read_eklaim_txt(_txt_content(
+        _row(sep="0132R0770626V000980", ptd=PTD_RAWAT_INAP, inacbg="K-4-17-I",
+             total_tarif="abc123", los="-2"),
+    )).df
+    analysis = build_eklaim_analysis(df, pd.DataFrame())
+    assert df.iloc[0]["_total_tarif_num"] is None
+    assert df.iloc[0]["_los_num"] is None
+    assert analysis.data_quality["Nilai Numerik Tidak Valid"] == 2
 
 
 class TestBuildFileReviewClaims:

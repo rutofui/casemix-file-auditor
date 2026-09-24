@@ -16,6 +16,7 @@ from src.parser_eklaim_txt import (
 )
 from src.eklaim_formatting import format_analysis_frame_for_display, format_summary_value
 from src.ui.layout import format_elapsed, render_panel_header
+from src.ui.results import begin_review, finish_review, input_signature, render_result_context, set_current_input
 
 
 def render_txt_analysis_tab() -> None:
@@ -39,6 +40,8 @@ def render_txt_analysis_tab() -> None:
             key="eklaim_txt_rj",
         )
 
+    set_current_input("eklaim", input_signature(ri_file, rj_file))
+
     if st.button(
         "Jalankan Analisis TXT E-Klaim",
         type="primary",
@@ -51,6 +54,8 @@ def render_txt_analysis_tab() -> None:
 
 
 def run_txt_analysis(*, ri_file, rj_file) -> None:
+    signature = input_signature(ri_file, rj_file)
+    begin_review("eklaim")
     if ri_file is None and rj_file is None:
         st.error("Upload minimal satu file TXT Rawat Inap atau Rawat Jalan.")
         return
@@ -85,12 +90,14 @@ def run_txt_analysis(*, ri_file, rj_file) -> None:
                 st.warning(warning)
 
             analysis = build_eklaim_analysis(ri_df, rj_df)
+            analysis.warnings = warnings + analysis.warnings
             export_bytes = export_eklaim_analysis_to_excel(analysis)
 
         elapsed = time.perf_counter() - started_at
         st.session_state["eklaim_analysis"] = analysis
         st.session_state["eklaim_export_bytes"] = export_bytes
         st.session_state["eklaim_analysis_duration_sec"] = elapsed
+        finish_review("eklaim", signature, ", ".join(f.name for f in (ri_file, rj_file) if f is not None))
         st.success(f"Analisis TXT E-Klaim selesai ({format_elapsed(elapsed)}).")
     except Exception as exc:
         st.error(f"Analisis TXT E-Klaim gagal: {exc}")
@@ -108,10 +115,29 @@ def render_txt_analysis_results() -> None:
 
     if not has_results:
         return
+    if not render_result_context("eklaim"):
+        return
 
     st.subheader("Ringkasan")
     _render_summary_metrics(analysis.summary)
     _render_casemix_metrics(analysis.casemix_index)
+    st.markdown("**Kualitas data**")
+    quality_items = list(analysis.data_quality.items())
+    for start in range(0, len(quality_items), 4):
+        for col, (label, value) in zip(st.columns(4), quality_items[start : start + 4]):
+            col.metric(label, value)
+    for warning in getattr(analysis, "warnings", []):
+        st.warning(warning)
+    _render_section_table("PTD Tidak Valid", analysis.invalid_ptd_df, "ptd_tidak_valid")
+    _render_section_table("Nilai Numerik Kosong atau Tidak Valid", analysis.invalid_numeric_df, "angka_tidak_valid")
+    with st.expander("Cara membaca persentase dan aturan penapisan"):
+        st.markdown(
+            "Persentase selisih per klaim = **(Tarif RS - TOTAL_TARIF) / Tarif RS × 100%**; "
+            "baris bertanda memerlukan tarif RS positif dan kedua tarif tersedia. Persentase ringkasan DPJP "
+            "memakai total Tarif RS sebagai penyebut. Penapisan LOS hanya untuk PTD rawat inap: "
+            "severity > 1 dengan LOS < 5 hari, atau severity 1 dengan LOS > 5 hari. "
+            "Ini penanda telaah, bukan kesimpulan kesalahan klaim."
+        )
 
     st.divider()
     left, right = st.columns([3, 1])

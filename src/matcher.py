@@ -6,6 +6,7 @@ from typing import Any
 import pandas as pd
 
 from .config import (
+    CONTENT_COMPONENTS,
     CONTENT_REVIEW_COLUMNS,
     FILE_REVIEW_COLUMNS,
     FILE_REVIEW_ICD_COLUMNS,
@@ -77,7 +78,12 @@ def build_pdf_content_review(
     pdf_results_by_source_id: dict[str, Any] | None = None,
     *,
     use_ocr: bool = False,
+    required_components: list[str] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, int]]:
+    if required_components is not None:
+        unknown = set(required_components) - set(CONTENT_COMPONENTS)
+        if not required_components or unknown:
+            raise ValueError(f"Checklist komponen tidak valid: {', '.join(sorted(unknown)) or 'kosong'}")
     pdf_results_by_source_id = pdf_results_by_source_id or {}
     file_entries = file_entries_df.copy() if file_entries_df is not None else pd.DataFrame()
     content_entries = (
@@ -90,13 +96,19 @@ def build_pdf_content_review(
             entry=entry,
             pdf_results_by_source_id=pdf_results_by_source_id,
             use_ocr=use_ocr,
+            required_components=required_components,
         )
         for _, entry in content_entries.iterrows()
     ]
     columns = OCR_CONTENT_REVIEW_COLUMNS if use_ocr else CONTENT_REVIEW_COLUMNS
+    if required_components is not None:
+        columns = ["No SEP", "Nama File", "Path File", "PDF Dapat Dibaca", *CONTENT_COMPONENTS,
+                   "SEP Dalam PDF", "Bukti Halaman", "Status Akhir", "Catatan"]
     review_df = pd.DataFrame(rows, columns=columns)
     orphan_df = pd.DataFrame(columns=["No SEP", "Path File", "Tanggal Folder", "Sumber", "Catatan"])
-    summary = build_content_summary(review_df, pd.DataFrame(), use_ocr=use_ocr)
+    summary = build_content_summary(
+        review_df, pd.DataFrame(), use_ocr=use_ocr, required_components=required_components
+    )
     return review_df, orphan_df, summary
 
 
@@ -110,7 +122,7 @@ def build_orphan_pdf_table(index_entries: pd.DataFrame, valid_claim_seps: set[st
         sep = str(entry.get("no_sep", "") or "")
         if sep and sep in valid_claim_seps:
             continue
-        note = "SEP tidak ada di Excel."
+        note = "SEP tidak ada di daftar acuan."
         if not sep:
             note = "SEP tidak terdeteksi dari nama/path PDF."
         rows.append(
@@ -141,7 +153,7 @@ def build_file_summary(
             "Belum ada PDF": 0,
             "Salah folder": 0,
             "Duplikat": 0,
-            "PDF tanpa Excel": 0,
+            "PDF di luar daftar acuan": 0,
             "Jumlah lengkap": 0,
         }
         if icd_check_active:
@@ -156,13 +168,17 @@ def build_file_summary(
         "Belum ada PDF": int((review_df["Status File"] == STATUS_FILE_BELUM_ADA).sum()),
         "Salah folder": int((review_df["Status Folder"] == STATUS_FOLDER_SALAH).sum()),
         "Duplikat": int((review_df["Duplikat"] == YES).sum()),
-        "PDF tanpa Excel": int(len(orphan_df)),
+        "PDF di luar daftar acuan": int(len(orphan_df)),
         "Jumlah lengkap": int((review_df["Status Akhir"] == STATUS_LENGKAP).sum()),
     }
     if icd_check_active:
-        summary["Kode ICD tidak sesuai"] = int((review_df["Status Akhir"] == STATUS_ICD_TIDAK_SESUAI).sum())
+        summary["Kode ICD tidak sesuai"] = int(
+            review_df["Temuan"].fillna("").str.split("; ").map(lambda items: STATUS_ICD_TIDAK_SESUAI in items).sum()
+        )
     if lip_check_active:
-        summary["Data LIP tidak sesuai"] = int((review_df["Status Akhir"] == STATUS_DATA_LIP_TIDAK_SESUAI).sum())
+        summary["Data LIP tidak sesuai"] = int(
+            review_df["Temuan"].fillna("").str.split("; ").map(lambda items: STATUS_DATA_LIP_TIDAK_SESUAI in items).sum()
+        )
     return summary
 
 
@@ -171,14 +187,27 @@ def build_content_summary(
     claims_df: pd.DataFrame,
     *,
     use_ocr: bool = False,
+    required_components: list[str] | None = None,
 ) -> dict[str, int]:
+    if required_components is not None:
+        return {
+            "Total PDF": int(len(review_df)),
+            "PDF dibaca": int((review_df["PDF Dapat Dibaca"] == YES).sum()) if not review_df.empty else 0,
+            **{
+                component: int((review_df[component] == YES).sum()) if not review_df.empty else 0
+                for component in required_components
+            },
+            "Kurang komponen": int((review_df["Status Akhir"] == STATUS_KURANG_KOMPONEN).sum()) if not review_df.empty else 0,
+            "Perlu review manual": int((review_df["Status Akhir"] == STATUS_REVIEW_MANUAL).sum()) if not review_df.empty else 0,
+            "Isi lengkap": int((review_df["Status Akhir"] == STATUS_LENGKAP).sum()) if not review_df.empty else 0,
+        }
     if use_ocr:
         return build_ocr_content_summary(review_df)
     if review_df.empty:
         return {
             "Total PDF": 0,
             "PDF dibaca": 0,
-            "SEP cocok di PDF": 0,
+            "SEP terdeteksi di PDF": 0,
             "LIP": 0,
             "Rincian tagihan": 0,
             "Hasil scan": 0,
@@ -189,7 +218,7 @@ def build_content_summary(
     return {
         "Total PDF": int(len(review_df)),
         "PDF dibaca": int((review_df["PDF Dapat Dibaca"] == YES).sum()),
-        "SEP cocok di PDF": int((review_df["SEP Terdeteksi Dalam PDF"] == YES).sum()),
+        "SEP terdeteksi di PDF": int((review_df["SEP Terdeteksi Dalam PDF"] == YES).sum()),
         "LIP": int((review_df["LIP Terdeteksi"] == YES).sum()),
         "Rincian tagihan": int((review_df["Rincian Tagihan Terdeteksi"] == YES).sum()),
         "Hasil scan": int((review_df["Hasil Scan Terdeteksi"] == YES).sum()),
@@ -204,7 +233,7 @@ def build_ocr_content_summary(review_df: pd.DataFrame) -> dict[str, int]:
         return {
             "Total PDF": 0,
             "PDF dibaca": 0,
-            "SEP cocok di PDF": 0,
+            "SEP terdeteksi di PDF": 0,
             "LIP": 0,
             "Rincian tagihan": 0,
             "Resume Medis": 0,
@@ -219,7 +248,7 @@ def build_ocr_content_summary(review_df: pd.DataFrame) -> dict[str, int]:
     return {
         "Total PDF": int(len(review_df)),
         "PDF dibaca": int((review_df["PDF Dapat Dibaca"] == YES).sum()),
-        "SEP cocok di PDF": int((review_df["SEP Terdeteksi Dalam PDF"] == YES).sum()),
+        "SEP terdeteksi di PDF": int((review_df["SEP Terdeteksi Dalam PDF"] == YES).sum()),
         "LIP": int((review_df["LIP Terdeteksi"] == YES).sum()),
         "Rincian tagihan": int((review_df["Rincian Tagihan Terdeteksi"] == YES).sum()),
         "Resume Medis": int((review_df["Resume Medis"] == YES).sum()),
@@ -243,41 +272,50 @@ def _review_one_file_count(
     sep = str(claim.get("_no_sep_normalized", "") or "")
     sep_valid = bool(claim.get("_sep_valid", False))
     notes: list[str] = []
+    findings: list[str] = []
     row = _base_file_row(claim, sep)
 
     if not sep_valid:
         row["Status Akhir"] = STATUS_REVIEW_MANUAL
+        row["Temuan"] = STATUS_REVIEW_MANUAL
         row["Catatan"] = "No SEP kosong atau format SEP tidak valid."
         return row
 
     matched_index = index_entries[index_entries["no_sep"] == sep] if not index_entries.empty else index_entries
     if matched_index.empty:
         row["Status Akhir"] = STATUS_KURANG_PDF
+        row["Temuan"] = STATUS_KURANG_PDF
         row["Catatan"] = "File PDF untuk SEP ini belum ditemukan."
         return row
 
     _apply_file_match(row, claim, matched_index, notes)
 
     if row["Duplikat"] == YES:
-        final_status = STATUS_DUPLIKAT
-    elif row["Status Folder"] == STATUS_FOLDER_SALAH:
-        final_status = STATUS_SALAH_FOLDER
+        findings.append(STATUS_DUPLIKAT)
+    if row["Status Folder"] == STATUS_FOLDER_SALAH:
+        findings.append(STATUS_SALAH_FOLDER)
     elif row["Status Folder"] == STATUS_FOLDER_TIDAK_TERDETEKSI:
-        final_status = STATUS_REVIEW_MANUAL
-    elif lip_metadata_results is not None:
-        final_status = _apply_lip_metadata_check(row, sep, lip_metadata_results, notes)
-        if final_status == STATUS_LENGKAP and icd_check_results is not None:
-            final_status = _apply_icd_check(row, sep, icd_check_results, notes)
-        elif icd_check_results is not None:
-            icd_status = _apply_icd_check(row, sep, icd_check_results, notes)
-            if icd_status == STATUS_ICD_TIDAK_SESUAI:
-                final_status = icd_status
-    elif icd_check_results is not None:
-        final_status = _apply_icd_check(row, sep, icd_check_results, notes)
-    else:
-        final_status = STATUS_LENGKAP
+        findings.append(STATUS_REVIEW_MANUAL)
 
-    row["Status Akhir"] = final_status
+    lip_status = STATUS_LENGKAP
+    if lip_metadata_results is not None:
+        lip_status = _apply_lip_metadata_check(row, sep, lip_metadata_results, notes)
+        if lip_status != STATUS_LENGKAP:
+            findings.append(lip_status)
+        if any(row.get(column) == NO for column in (
+            "Tanggal Masuk Sesuai", "Tanggal Keluar Sesuai", "Kelas Perawatan Sesuai"
+        )):
+            findings.append(STATUS_DATA_LIP_TIDAK_SESUAI)
+    icd_status = STATUS_LENGKAP
+    if icd_check_results is not None:
+        icd_status = _apply_icd_check(row, sep, icd_check_results, notes)
+        if icd_status != STATUS_LENGKAP:
+            findings.append(icd_status)
+
+    row["Temuan"] = "; ".join(_unique_non_empty(findings))
+    priority = [STATUS_DUPLIKAT, STATUS_SALAH_FOLDER, STATUS_REVIEW_MANUAL,
+                STATUS_DATA_LIP_TIDAK_SESUAI, STATUS_ICD_TIDAK_SESUAI]
+    row["Status Akhir"] = next((status for status in priority if status in findings), STATUS_LENGKAP)
     row["Catatan"] = " ".join(_unique_non_empty(notes))
     return row
 
@@ -299,6 +337,7 @@ def _apply_lip_metadata_check(
     row["Kelas Perawatan LIP"] = _result_value(result, "kelas_perawatan_lip", "") or ""
 
     mismatch = False
+    missing_data = False
     for result_key, column, label in [
         ("tanggal_masuk_match", "Tanggal Masuk Sesuai", "Tanggal masuk"),
         ("tanggal_keluar_match", "Tanggal Keluar Sesuai", "Tanggal keluar"),
@@ -307,11 +346,23 @@ def _apply_lip_metadata_check(
         match_value = _result_value(result, result_key, None)
         if match_value is None:
             row[column] = "-"
+            missing_data = True
+            notes.append(f"{label} tidak tersedia sebagai data pembanding.")
             continue
         row[column] = bool_to_ya_tidak(bool(match_value))
         if not match_value:
-            mismatch = True
-            notes.append(f"{label} di LIP tidak sesuai dengan TXT E-Klaim.")
+            detected_key = {
+                "tanggal_masuk_match": "tanggal_masuk_lip",
+                "tanggal_keluar_match": "tanggal_keluar_lip",
+                "kelas_perawatan_match": "kelas_perawatan_lip",
+            }[result_key]
+            if not _result_value(result, detected_key, ""):
+                row[column] = "-"
+                missing_data = True
+                notes.append(f"{label} tidak ditemukan di LIP.")
+            else:
+                mismatch = True
+                notes.append(f"{label} di LIP tidak sesuai dengan TXT E-Klaim.")
 
     error = _result_value(result, "error", "")
     if error:
@@ -321,6 +372,10 @@ def _apply_lip_metadata_check(
             notes.append(str(note))
 
     if not readable:
+        return STATUS_REVIEW_MANUAL
+    if missing_data or not _result_value(result, "lip_page_number", None):
+        if not _result_value(result, "lip_page_number", None):
+            notes.append("Halaman LIP tidak terdeteksi di PDF.")
         return STATUS_REVIEW_MANUAL
     if mismatch:
         return STATUS_DATA_LIP_TIDAK_SESUAI
@@ -335,24 +390,25 @@ def _apply_icd_check(
 ) -> str:
     result = icd_check_results.get(sep)
     if result is None:
-        # SEP intentionally skipped by the orchestrator (e.g. no matched local
-        # PDF) — don't penalize a row the check never attempted.
-        return STATUS_LENGKAP
+        notes.append("Verifikasi kode ICD tidak menghasilkan data untuk SEP ini.")
+        return STATUS_REVIEW_MANUAL
 
     icd10_missing = list(_result_value(result, "icd10_missing", []) or [])
     icd9_missing = list(_result_value(result, "icd9_missing", []) or [])
     readable = bool(_result_value(result, "readable", False))
 
-    row["ICD-10 Sesuai"] = bool_to_ya_tidak(not icd10_missing)
-    row["ICD-9-CM Sesuai"] = bool_to_ya_tidak(not icd9_missing)
     missing_codes = _unique_non_empty(icd10_missing + icd9_missing)
-    row["Kode Tidak Ditemukan di PDF"] = ", ".join(missing_codes)
 
     if not readable:
-        row["ICD-10 Sesuai"] = NO
-        row["ICD-9-CM Sesuai"] = NO
+        row["ICD-10 Sesuai"] = "-"
+        row["ICD-9-CM Sesuai"] = "-"
+        row["Kode Tidak Ditemukan di PDF"] = ""
         notes.append("Halaman pertama PDF tidak dapat dibaca untuk verifikasi kode ICD.")
-        return STATUS_ICD_TIDAK_SESUAI
+        return STATUS_REVIEW_MANUAL
+
+    row["ICD-10 Sesuai"] = bool_to_ya_tidak(not icd10_missing)
+    row["ICD-9-CM Sesuai"] = bool_to_ya_tidak(not icd9_missing)
+    row["Kode Tidak Ditemukan di PDF"] = ", ".join(missing_codes)
 
     if missing_codes:
         notes.append(f"Kode tidak ditemukan di halaman pertama PDF: {', '.join(missing_codes)}.")
@@ -366,11 +422,20 @@ def _review_one_pdf_content(
     entry: pd.Series,
     pdf_results_by_source_id: dict[str, Any],
     use_ocr: bool,
+    required_components: list[str] | None = None,
 ) -> dict[str, object]:
     source_id = str(entry.get("source_id", ""))
     filename_sep = str(entry.get("no_sep", "") or "")
     pdf_result = pdf_results_by_source_id.get(source_id)
     notes: list[str] = []
+    required_components = required_components if required_components is not None else (
+        OCR_REQUIRED_COMPONENTS if use_ocr else REQUIRED_COMPONENTS
+    )
+    known_components = [
+        "SEP Terdeteksi Dalam PDF", "LIP Terdeteksi", "Rincian Tagihan Terdeteksi",
+        "Hasil Scan Terdeteksi", "Resume Medis", "Triage", "Surat Perintah Rawat Inap",
+        "Hasil Pemeriksaan", "Pemeriksaan Radiologi",
+    ]
     row = {
         "No SEP": filename_sep,
         "Nama File": entry.get("file_name", ""),
@@ -388,7 +453,12 @@ def _review_one_pdf_content(
         "Pemeriksaan Radiologi": NO,
         "Status Akhir": STATUS_REVIEW_MANUAL,
         "Catatan": "",
+        "SEP Dalam PDF": "",
+        "Bukti Halaman": "",
     }
+    for component in known_components:
+        if component not in required_components:
+            row[component] = "Tidak berlaku"
 
     if pdf_result is None:
         row["Catatan"] = "PDF belum diperiksa."
@@ -410,17 +480,9 @@ def _review_one_pdf_content(
         _unique_non_empty(list(_result_value(pdf_result, "document_titles", []) or []))
     )
     detected_titles = set(_result_value(pdf_result, "document_titles", []) or [])
-    for title in [
-        "Resume Medis",
-        "Triage",
-        "Surat Perintah Rawat Inap",
-        "Hasil Pemeriksaan",
-        "Pemeriksaan Radiologi",
-    ]:
-        row[title] = bool_to_ya_tidak(title in detected_titles)
-
-    if filename_sep and pdf_sep_values and filename_sep not in set(pdf_sep_values):
-        notes.append("Nomor SEP pada nama file berbeda dengan SEP yang terdeteksi di isi PDF.")
+    for component in CONTENT_COMPONENTS:
+        if component in detected_titles and component in row:
+            row[component] = YES
 
     error = _result_value(pdf_result, "error", "")
     if error:
@@ -429,13 +491,33 @@ def _review_one_pdf_content(
         if note:
             notes.append(str(note))
 
-    required_components = OCR_REQUIRED_COMPONENTS if use_ocr else REQUIRED_COMPONENTS
     missing_components = [col for col in required_components if row.get(col, NO) != YES]
-    if _result_value(pdf_result, "needs_manual_review", False):
+    sep_mismatch = bool(filename_sep and pdf_sep_values and filename_sep not in set(pdf_sep_values))
+    multiple_pdf_seps = len(set(pdf_sep_values)) > 1
+    if sep_mismatch:
+        notes.append("Nomor SEP pada nama file berbeda dengan SEP yang terdeteksi di isi PDF.")
+    if multiple_pdf_seps:
+        notes.append("Lebih dari satu nomor SEP terdeteksi di isi PDF.")
+    for component in CONTENT_COMPONENTS:
+        if component not in required_components:
+            row[component] = "Tidak berlaku"
+    if missing_components:
+        notes.append("Komponen belum terdeteksi: " + ", ".join(missing_components))
+    row["SEP Dalam PDF"] = ", ".join(_unique_non_empty(pdf_sep_values))
+    component_pages = _result_value(pdf_result, "component_pages", {}) or {}
+    row["Bukti Halaman"] = "; ".join(
+        f"{name}: {', '.join(map(str, pages))}"
+        for name, pages in component_pages.items() if pages
+    )
+    identity_unreadable = not bool(_result_value(pdf_result, "readable", False))
+    identity_missing = not pdf_sep_values
+    if (
+        sep_mismatch or multiple_pdf_seps or identity_unreadable or identity_missing
+        or _result_value(pdf_result, "needs_manual_review", False)
+    ):
         final_status = STATUS_REVIEW_MANUAL
     elif missing_components:
         final_status = STATUS_KURANG_KOMPONEN
-        notes.append("Komponen belum terdeteksi: " + ", ".join(missing_components))
     else:
         final_status = STATUS_LENGKAP
 

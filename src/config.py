@@ -67,6 +67,7 @@ FILE_REVIEW_COLUMNS = [
     "Status Folder",
     "Duplikat",
     "Status Akhir",
+    "Temuan",
     "Catatan",
 ]
 
@@ -100,6 +101,8 @@ CONTENT_REVIEW_COLUMNS = [
     "LIP Terdeteksi",
     "Rincian Tagihan Terdeteksi",
     "Hasil Scan Terdeteksi",
+    "Bukti Halaman",
+    "SEP Dalam PDF",
     "Status Akhir",
     "Catatan",
 ]
@@ -117,6 +120,8 @@ OCR_CONTENT_REVIEW_COLUMNS = [
     "Surat Perintah Rawat Inap",
     "Hasil Pemeriksaan",
     "Pemeriksaan Radiologi",
+    "Bukti Halaman",
+    "SEP Dalam PDF",
     "Status Akhir",
     "Catatan",
 ]
@@ -147,18 +152,16 @@ LIP_KEYWORDS = [
 ]
 
 BILLING_KEYWORDS = [
-    "Billing",
     "Rincian Biaya",
     "Rincian Tagihan",
-    "Total Biaya",
-    "Total Tarif",
-    "Tarif Rumah Sakit",
-    "Administrasi",
-    "Hasil Grouping",
-    "INA-CBG",
-    "Barang",
-    "Jasa",
-    "Fasilitas",
+    "Rincian Tarif Rumah Sakit",
+    "Rincian Billing",
+]
+
+LIP_EVIDENCE_KEYWORDS = [
+    "Berkas Klaim Individual Pasien",
+    "Lembar Individual Pasien",
+    "Individual Pasien",
 ]
 
 DOCUMENT_TITLE_KEYWORDS = {
@@ -309,13 +312,15 @@ def spri_detected_on_page(page_text: str, *, header_only_ocr: bool = False) -> b
 
 def detect_document_titles_on_page(page_text: str, *, header_only_ocr: bool = False) -> list[str]:
     normalized = normalize_text(page_text)
+    # ponytail: 700-char heading window can miss unusually long headers; widen if real forms do.
+    header = normalized[:SPRI_HEADER_CHAR_LIMIT]
     titles: list[str] = []
     for title, keywords in DOCUMENT_TITLE_KEYWORDS.items():
         if title == "Surat Perintah Rawat Inap":
             if spri_detected_on_page(page_text, header_only_ocr=header_only_ocr):
                 titles.append(title)
             continue
-        if any(document_title_keyword_match(normalized, keyword) for keyword in keywords):
+        if any(document_title_keyword_match(header, keyword) for keyword in keywords):
             titles.append(title)
     return titles
 
@@ -339,6 +344,30 @@ def detect_document_titles_from_pages(
 
 def detect_document_titles(text: str) -> list[str]:
     return detect_document_titles_on_page(text)
+
+
+CONTENT_COMPONENTS = [
+    "SEP Terdeteksi Dalam PDF",
+    "LIP Terdeteksi",
+    "Rincian Tagihan Terdeteksi",
+    "Hasil Scan Terdeteksi",
+    *DOCUMENT_TITLE_KEYWORDS.keys(),
+]
+
+CONTENT_REVIEW_PROFILES = {
+    "Rawat inap": [
+        "SEP Terdeteksi Dalam PDF",
+        "LIP Terdeteksi",
+        "Rincian Tagihan Terdeteksi",
+        "Resume Medis",
+        "Surat Perintah Rawat Inap",
+    ],
+    "Rawat jalan": [
+        "SEP Terdeteksi Dalam PDF",
+        "LIP Terdeteksi",
+        "Rincian Tagihan Terdeteksi",
+    ],
+}
 
 
 def bool_to_ya_tidak(value: bool) -> str:

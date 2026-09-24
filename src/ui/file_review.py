@@ -13,7 +13,17 @@ from src.parser_excel import read_claims_excel
 from src.ui.file_inputs import build_file_review_entries, show_file_input_warnings
 from src.ui.layout import format_elapsed, render_panel_header
 from src.ui.pdf_jobs import check_all_first_page_codes, check_all_lip_metadata
-from src.ui.results import empty_file_icd_summary, empty_file_summary, empty_file_txt_summary, render_review_panel
+from src.ui.results import (
+    begin_review,
+    empty_file_icd_summary,
+    empty_file_summary,
+    empty_file_txt_summary,
+    finish_review,
+    input_signature,
+    render_result_context,
+    render_review_panel,
+    set_current_input,
+)
 
 REFERENCE_MODE_EXCEL = "Excel"
 REFERENCE_MODE_TXT = "TXT E-Klaim"
@@ -28,7 +38,9 @@ def run_file_review(
     source_mode: str,
     file_list,
     folder_path: str,
+    signature: str,
 ) -> None:
+    begin_review("file")
     if reference_mode == REFERENCE_MODE_EXCEL and excel_file is None:
         st.error("Upload Excel daftar klaim terlebih dahulu.")
         return
@@ -122,6 +134,14 @@ def run_file_review(
         st.session_state["file_review_icd_check"] = icd_results is not None
         st.session_state["file_review_lip_check"] = lip_results is not None
         st.session_state["last_review_kind"] = "file"
+        claim_source = getattr(excel_file or txt_file, "name", "acuan")
+        pdf_source = (
+            folder_path.strip()
+            if source_mode == SOURCE_MODE_FOLDER
+            else getattr(file_list, "name", "list_berkas_klaim.txt")
+        )
+        source_label = f"{reference_mode}: {claim_source} | {source_mode}: {pdf_source}"
+        finish_review("file", signature, source_label)
         st.success(f"Review jumlah berkas selesai ({format_elapsed(elapsed)}).")
     except Exception as exc:
         st.error(f"Review jumlah berkas gagal: {exc}")
@@ -182,6 +202,14 @@ def render_file_review_tab() -> None:
             "Mode ini juga otomatis memeriksa apakah kode ICD-10 dan ICD-9-CM di TXT "
             "tercantum di halaman pertama PDF yang cocok."
         )
+    st.caption(
+        "Hasil menampilkan semua temuan per SEP. Status Akhir mengikuti prioritas utama; "
+        "kolom Temuan menyimpan temuan lain yang ikut diperiksa."
+    )
+    signature = input_signature(
+        file_reference_mode, file_excel, file_txt, file_source_mode, file_list, file_folder_path
+    )
+    set_current_input("file", signature)
     if file_reference_mode == REFERENCE_MODE_TXT:
         st.caption(
             "Mode TXT E-Klaim juga memeriksa kecocokan kelas perawatan, tanggal masuk, "
@@ -200,12 +228,15 @@ def render_file_review_tab() -> None:
             source_mode=file_source_mode,
             file_list=file_list,
             folder_path=file_folder_path,
+            signature=signature,
         )
     render_file_panel()
 
 
 def render_file_panel() -> None:
     if st.session_state.get("file_review_df") is None:
+        return
+    if not render_result_context("file"):
         return
     icd_check = bool(st.session_state.get("file_review_icd_check", False))
     lip_check = bool(st.session_state.get("file_review_lip_check", False))
@@ -223,7 +254,7 @@ def render_file_panel() -> None:
         empty_summary=empty_file_txt_summary() if lip_check else (empty_file_icd_summary() if icd_check else empty_file_summary()),
         status_options=status_options,
         export_file_name="hasil_review_jumlah_berkas.xlsx",
-        orphan_title="PDF di folder/list tetapi tidak ada di Excel",
+        orphan_title="PDF di folder/list di luar daftar acuan",
         widget_prefix="file_review",
         section_title="Hasil Review Jumlah Berkas",
         duration_sec=st.session_state.get("file_review_duration_sec"),

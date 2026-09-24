@@ -499,7 +499,7 @@ def test_check_first_page_codes_ignores_codes_only_on_later_pages() -> None:
     assert result.icd10_missing == ["A09.9"]
 
 
-def test_check_first_page_codes_unions_text_across_duplicate_paths() -> None:
+def test_check_first_page_codes_requires_codes_on_each_duplicate_pdf() -> None:
     with tempfile.TemporaryDirectory() as temp_dir:
         root = Path(temp_dir)
         path_a = root / "a.pdf"
@@ -510,7 +510,21 @@ def test_check_first_page_codes_unions_text_across_duplicate_paths() -> None:
         result = check_first_page_codes([str(path_a), str(path_b)], ["A09.9", "E86"], [])
 
     assert result.readable is True
-    assert result.icd10_missing == []
+    assert result.icd10_missing == ["A09.9", "E86"]
+
+
+def test_check_first_page_codes_duplicate_blank_page_requires_manual_review() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        blank = root / "blank.pdf"
+        readable = root / "readable.pdf"
+        _write_pdf(blank, "")
+        _write_pdf(readable, "DIAGNOSA: A09.9")
+
+        result = check_first_page_codes([str(blank), str(readable)], ["A09.9"], [])
+
+    assert result.readable is False
+    assert result.icd10_missing == ["A09.9"]
 
 
 def test_check_first_page_codes_nonexistent_path_is_unreadable() -> None:
@@ -617,6 +631,46 @@ def test_check_lip_metadata_parallel_matches_serial_results() -> None:
         assert parallel_results[sep].tanggal_masuk_match == serial_results[sep].tanggal_masuk_match
         assert parallel_results[sep].tanggal_keluar_match == serial_results[sep].tanggal_keluar_match
         assert parallel_results[sep].kelas_perawatan_match == serial_results[sep].kelas_perawatan_match
+
+
+def test_check_lip_metadata_checks_every_duplicate_pdf_and_keeps_both_findings() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        wrong = root / "wrong.pdf"
+        missing = root / "missing.pdf"
+        _write_pdf(wrong, "LIP\nTanggal Masuk : 02/06/2026\nTanggal Keluar : 05/06/2026\nKelas : 1")
+        _write_pdf(missing, "LIP\nTanggal Keluar : 05/06/2026\nKelas : 1")
+
+        result = check_lip_metadata(
+            [str(wrong), str(missing)],
+            expected_tanggal_masuk="2026-06-01",
+            expected_tanggal_keluar="2026-06-05",
+            expected_kelas_perawatan="1",
+        )
+        claims = pd.DataFrame([{
+            "No SEP": "0132R0770626V000091",
+            "Tanggal Masuk": "2026-06-01",
+            "Tanggal Pulang": "2026-06-05",
+            "Kelas Perawatan": "1",
+            "No RM": "RM001",
+            "Nama Pasien": "Pasien A",
+            "Diagnosa": "A09",
+            "_no_sep_normalized": "0132R0770626V000091",
+            "_sep_valid": True,
+        }])
+        files = pd.DataFrame([build_file_entry(
+            f"folder/05/0132R0770626V000091_{name}.pdf",
+            local_path=str(path), source="folder", is_index_source=True, is_content_source=True,
+        ) for name, path in [("wrong", wrong), ("missing", missing)]])
+        review_df, _, _ = build_file_review(
+            claims, files, lip_metadata_results={"0132R0770626V000091": result}
+        )
+
+    assert result.readable is False
+    assert result.tanggal_masuk_match is False
+    assert review_df.loc[0, "Tanggal Masuk Sesuai"] == "Tidak"
+    assert "Data LIP Tidak Sesuai" in review_df.loc[0, "Temuan"]
+    assert "Perlu Review Manual" in review_df.loc[0, "Temuan"]
 
 
 def test_check_lip_metadata_parallel_uses_multi_worker_thread_path(monkeypatch) -> None:

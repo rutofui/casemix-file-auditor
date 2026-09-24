@@ -41,15 +41,31 @@ class EklaimAnalysisResult:
     top_icd10_rj_df: pd.DataFrame = field(default_factory=pd.DataFrame)
     top_icd9_ri_df: pd.DataFrame = field(default_factory=pd.DataFrame)
     top_icd9_rj_df: pd.DataFrame = field(default_factory=pd.DataFrame)
+    data_quality: dict[str, object] = field(default_factory=dict)
+    invalid_ptd_df: pd.DataFrame = field(default_factory=pd.DataFrame)
+    invalid_numeric_df: pd.DataFrame = field(default_factory=pd.DataFrame)
+    warnings: list[str] = field(default_factory=list)
 
 
 def build_eklaim_analysis(
     ri_df: pd.DataFrame,
     rj_df: pd.DataFrame,
 ) -> EklaimAnalysisResult:
-    ri = _prepare_claims(ri_df, PTD_RAWAT_INAP)
-    rj = _prepare_claims(rj_df, PTD_RAWAT_JALAN)
+    input_frames = [df for df in (ri_df, rj_df) if df is not None and not df.empty]
+    all_claims = pd.concat(input_frames, ignore_index=True) if input_frames else pd.DataFrame()
+    if not all_claims.empty and "_ptd" in all_claims:
+        invalid_ptd = all_claims.loc[~all_claims["_ptd"].isin([PTD_RAWAT_INAP, PTD_RAWAT_JALAN])].copy()
+        ri = _prepare_claims(all_claims.loc[all_claims["_ptd"] == PTD_RAWAT_INAP], PTD_RAWAT_INAP)
+        rj = _prepare_claims(all_claims.loc[all_claims["_ptd"] == PTD_RAWAT_JALAN], PTD_RAWAT_JALAN)
+    else:
+        invalid_ptd = pd.DataFrame()
+        ri = _prepare_claims(ri_df, PTD_RAWAT_INAP)
+        rj = _prepare_claims(rj_df, PTD_RAWAT_JALAN)
     combined = pd.concat([ri, rj], ignore_index=True) if not ri.empty or not rj.empty else pd.DataFrame()
+    data_quality, invalid_numeric = _data_quality(all_claims)
+    warnings = []
+    if not combined.empty and (combined[["_total_tarif_num", "_tarif_rs_num"]].isna().any().any()):
+        warnings.append("Total tarif bersifat parsial karena ada nilai TOTAL_TARIF atau TARIF_RS kosong/tidak valid; selisih total dan agregat DPJP terkait dikosongkan.")
 
     return EklaimAnalysisResult(
         summary=_build_summary(ri, rj, combined),
@@ -66,6 +82,10 @@ def build_eklaim_analysis(
         top_icd10_rj_df=_build_top_codes_df(rj, code_column="DIAGLIST", label="ICD-10"),
         top_icd9_ri_df=_build_top_codes_df(ri, code_column="PROCLIST", label="ICD-9-CM"),
         top_icd9_rj_df=_build_top_codes_df(rj, code_column="PROCLIST", label="ICD-9-CM"),
+        data_quality=data_quality,
+        invalid_ptd_df=_invalid_ptd_df(invalid_ptd),
+        invalid_numeric_df=invalid_numeric,
+        warnings=warnings,
     )
 
 
@@ -90,19 +110,63 @@ def _prepare_claims(df: pd.DataFrame, default_ptd: str) -> pd.DataFrame:
     return prepared
 
 
+def _data_quality(df: pd.DataFrame) -> tuple[dict[str, object], pd.DataFrame]:
+    if df.empty:
+        return {"Baris Klaim": 0, "SEP Unik Valid": 0, "SEP Kosong": 0, "SEP Tidak Valid": 0,
+                "PTD Tidak Valid": 0, "Nilai Numerik Kosong": 0, "Nilai Numerik Tidak Valid": 0,
+                "Cost Weight Tersedia": 0, "Cakupan Cost Weight (%)": 0.0}, pd.DataFrame(columns=["SEP", "Field", "Nilai", "Masalah"])
+    valid = df["_sep_valid"]
+    sep = df["SEP"].astype(str).str.strip()
+    empty_sep = sep.eq("")
+    numeric = {"TOTAL_TARIF": "_total_tarif_num", "TARIF_RS": "_tarif_rs_num", "LOS": "_los_num",
+               "ICU_INDIKATOR": "_icu_indikator_num", "ICU_LOS": "_icu_los_num", "RAWAT_INTENSIF": "_rawat_intensif_num"}
+    issues = []
+    for field, parsed in numeric.items():
+        if parsed not in df:
+            continue
+        raw = df[field].astype(str).str.strip() if field in df else pd.Series("", index=df.index)
+        missing = raw.isin(["", "-", "nan", "None"])
+        invalid = ~missing & df[parsed].isna()
+        for index in df.index[missing | invalid]:
+            issues.append({"SEP": df.at[index, "SEP"], "Field": field, "Nilai": raw.at[index],
+                           "Masalah": "Kosong" if missing.at[index] else "Format tidak valid"})
+    coverage_n = int(df["_idrg_cost_weight"].notna().sum())
+    count = len(df)
+    detail = pd.DataFrame(issues, columns=["SEP", "Field", "Nilai", "Masalah"])
+    return {"Baris Klaim": count, "SEP Unik Valid": int(df.loc[valid, "_sep_normalized"].nunique()),
+            "SEP Kosong": int(empty_sep.sum()), "SEP Tidak Valid": int((~valid & ~empty_sep).sum()),
+            "PTD Tidak Valid": int((~df["_ptd"].isin([PTD_RAWAT_INAP, PTD_RAWAT_JALAN])).sum()),
+            "Nilai Numerik Kosong": int(sum(x["Masalah"] == "Kosong" for x in issues)),
+            "Nilai Numerik Tidak Valid": int(sum(x["Masalah"] != "Kosong" for x in issues)),
+            "Cost Weight Tersedia": coverage_n,
+            "Cakupan Cost Weight (%)": round(coverage_n * 100 / count, 2) if count else 0.0}, detail
+
+
+def _invalid_ptd_df(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame(columns=["SEP", "NAMA_PASIEN", "MRN", "PTD", "Catatan"])
+    out = df[[c for c in ("SEP", "NAMA_PASIEN", "MRN", "PTD") if c in df]].copy()
+    out["Catatan"] = "PTD bukan 1 (Rawat Inap) atau 2 (Rawat Jalan)"
+    return out
+
+
 def _build_summary(ri: pd.DataFrame, rj: pd.DataFrame, combined: pd.DataFrame) -> dict[str, object]:
     total_ri = int(len(ri))
     total_rj = int(len(rj))
     total_all = int(len(combined))
-    total_tarif = float(combined["_total_tarif_num"].fillna(0).sum()) if not combined.empty else 0.0
-    total_rs = float(combined["_tarif_rs_num"].fillna(0).sum()) if not combined.empty else 0.0
+    grouper_values = combined["_total_tarif_num"].dropna() if not combined.empty else pd.Series(dtype=float)
+    rs_values = combined["_tarif_rs_num"].dropna() if not combined.empty else pd.Series(dtype=float)
+    complete_tariffs = len(grouper_values) == total_all and len(rs_values) == total_all
+    total_tarif = grouper_values.sum(min_count=1)
+    total_rs = rs_values.sum(min_count=1)
+    difference = total_rs - total_tarif if complete_tariffs and total_all else None
     return {
         "Total Klaim Rawat Jalan": total_rj,
         "Total Klaim Rawat Inap": total_ri,
         "Total Klaim Keseluruhan": total_all,
-        "Total Tarif Grouper (TOTAL_TARIF)": int(total_tarif),
-        "Total Tarif RS": int(total_rs),
-        "Selisih Total Tarif RS - Grouper": int(total_rs - total_tarif),
+        "Total Tarif Grouper (TOTAL_TARIF)": _clean_number(total_tarif, integer=True),
+        "Total Tarif RS": _clean_number(total_rs, integer=True),
+        "Selisih Total Tarif RS - Grouper": _clean_number(difference, integer=True),
     }
 
 
@@ -154,7 +218,7 @@ def _build_severity_high_los_low_df(ri: pd.DataFrame) -> pd.DataFrame:
     for _, claim in ri.iterrows():
         severity = claim.get("_severity")
         los = claim.get("_los_num")
-        if severity is None or los is None:
+        if pd.isna(severity) or pd.isna(los):
             continue
         if severity > 1 and los < 5:
             rows.append(
@@ -173,7 +237,7 @@ def _build_severity_low_los_high_df(ri: pd.DataFrame) -> pd.DataFrame:
     for _, claim in ri.iterrows():
         severity = claim.get("_severity")
         los = claim.get("_los_num")
-        if severity is None or los is None:
+        if pd.isna(severity) or pd.isna(los):
             continue
         if severity == 1 and los > 5:
             rows.append(
@@ -205,7 +269,7 @@ def _build_grouper_gt_rs_df(df: pd.DataFrame) -> pd.DataFrame:
     for _, claim in df.iterrows():
         total_tarif = claim.get("_total_tarif_num")
         tarif_rs = claim.get("_tarif_rs_num")
-        if total_tarif is None or tarif_rs is None:
+        if pd.isna(total_tarif) or pd.isna(tarif_rs):
             continue
         if total_tarif > tarif_rs:
             rows.append(_flag_row(claim, catatan="TOTAL_TARIF lebih besar dari TARIF_RS"))
@@ -219,7 +283,7 @@ def _build_selisih_gt_30pct_df(df: pd.DataFrame) -> pd.DataFrame:
     for _, claim in df.iterrows():
         tarif_rs = claim.get("_tarif_rs_num")
         selisih_pct = claim.get("_selisih_pct")
-        if tarif_rs is None or tarif_rs <= 0 or selisih_pct is None:
+        if pd.isna(tarif_rs) or tarif_rs <= 0 or pd.isna(selisih_pct):
             continue
         if selisih_pct > 30:
             rows.append(_flag_row(claim, catatan="Selisih tarif RS - grouper > 30%"))
@@ -242,16 +306,19 @@ def _build_dpjp_summary_df(df: pd.DataFrame) -> pd.DataFrame:
         df.groupby("_dpjp_normalized", dropna=False)
         .agg(
             Jumlah_Klaim=("SEP", "count"),
-            Total_Tarif_Grouper=("_total_tarif_num", "sum"),
-            Total_Tarif_RS=("_tarif_rs_num", "sum"),
+            Total_Tarif_Grouper=("_total_tarif_num", lambda values: values.sum(min_count=1)),
+            Total_Tarif_RS=("_tarif_rs_num", lambda values: values.sum(min_count=1)),
+            Grouper_Lengkap=("_total_tarif_num", lambda values: values.notna().all()),
+            Tarif_RS_Lengkap=("_tarif_rs_num", lambda values: values.notna().all()),
         )
         .reset_index()
     )
-    grouped["Selisih Rp"] = grouped["Total_Tarif_RS"] - grouped["Total_Tarif_Grouper"]
+    complete = grouped["Grouper_Lengkap"] & grouped["Tarif_RS_Lengkap"]
+    grouped["Selisih Rp"] = (grouped["Total_Tarif_RS"] - grouped["Total_Tarif_Grouper"]).where(complete)
     grouped["Selisih %"] = grouped.apply(
         lambda row: round((row["Selisih Rp"] / row["Total_Tarif_RS"]) * 100, 2)
-        if row["Total_Tarif_RS"] > 0
-        else 0.0,
+        if pd.notna(row["Selisih Rp"]) and row["Total_Tarif_RS"] > 0
+        else None,
         axis=1,
     )
     grouped = grouped.rename(
@@ -262,9 +329,9 @@ def _build_dpjp_summary_df(df: pd.DataFrame) -> pd.DataFrame:
             "Total_Tarif_RS": "Total Tarif RS",
         }
     )
-    grouped["Total Tarif Grouper"] = grouped["Total Tarif Grouper"].fillna(0).astype(int)
-    grouped["Total Tarif RS"] = grouped["Total Tarif RS"].fillna(0).astype(int)
-    grouped["Selisih Rp"] = grouped["Selisih Rp"].fillna(0).astype(int)
+    for column in ("Total Tarif Grouper", "Total Tarif RS", "Selisih Rp"):
+        grouped[column] = grouped[column].map(lambda value: _clean_number(value, integer=True))
+    grouped.drop(columns=["Grouper_Lengkap", "Tarif_RS_Lengkap"], inplace=True)
     grouped = grouped.sort_values(["Jumlah Klaim", "DPJP"], ascending=[False, True])
     return grouped.reset_index(drop=True)
 
@@ -300,14 +367,14 @@ def _flag_row(claim: pd.Series, *, catatan: str) -> dict[str, object]:
         "MRN": claim.get("MRN", ""),
         "PTD": claim.get("_ptd", claim.get("PTD", "")),
         "INACBG": claim.get("INACBG", ""),
-        "Severity": claim.get("_severity"),
-        "LOS": int(claim.get("_los_num")) if claim.get("_los_num") is not None else "",
+        "Severity": _clean_number(claim.get("_severity")),
+        "LOS": _clean_number(claim.get("_los_num"), integer=True),
         "DIAGLIST": claim.get("DIAGLIST", ""),
         "PROCLIST": claim.get("PROCLIST", ""),
-        "TOTAL_TARIF": int(total_tarif) if total_tarif is not None else "",
-        "TARIF_RS": int(tarif_rs) if tarif_rs is not None else "",
-        "Selisih_Rp": int(selisih_rp) if selisih_rp is not None else "",
-        "Selisih_Pct": round(selisih_pct, 2) if selisih_pct is not None else "",
+        "TOTAL_TARIF": _clean_number(total_tarif, integer=True),
+        "TARIF_RS": _clean_number(tarif_rs, integer=True),
+        "Selisih_Rp": _clean_number(selisih_rp, integer=True),
+        "Selisih_Pct": _clean_number(selisih_pct, decimals=2),
         "DPJP": claim.get("DPJP", ""),
         "Catatan": catatan,
     }
@@ -324,7 +391,7 @@ def _empty_flag_df() -> pd.DataFrame:
 
 
 def _as_number(value: object) -> float | None:
-    if value is None or value == "":
+    if value is None or value == "" or pd.isna(value):
         return None
     try:
         return float(value)
@@ -332,12 +399,18 @@ def _as_number(value: object) -> float | None:
         return None
 
 
+def _clean_number(value: object, *, integer: bool = False, decimals: int = 2):
+    if value is None or pd.isna(value):
+        return ""
+    return int(value) if integer else round(float(value), decimals)
+
+
 def _selisih_pct(row: pd.Series) -> float | None:
     tarif_rs = row.get("_tarif_rs_num")
-    if tarif_rs is None or tarif_rs <= 0:
+    if pd.isna(tarif_rs) or tarif_rs <= 0:
         return None
     selisih = row.get("_selisih_rp")
-    if selisih is None:
+    if pd.isna(selisih):
         return None
     return (selisih / tarif_rs) * 100
 

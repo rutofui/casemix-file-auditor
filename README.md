@@ -97,6 +97,12 @@ Browser akan membuka aplikasi Streamlit. Jika tidak terbuka otomatis, buka URL y
 
 ## Proses Review
 
+### Analisis TXT e-Klaim
+
+Kelompok rawat inap/rawat jalan ditentukan oleh PTD dalam data, bukan kotak upload. PTD di luar 1/2 dipisahkan untuk koreksi. Ringkasan kualitas data menampilkan SEP unik valid, SEP kosong/tidak valid, angka kosong/tidak valid, dan cakupan cost weight. Data bermasalah tetap ditampilkan untuk perbaikan tanpa menghentikan seluruh batch.
+
+Persentase selisih memakai `(Tarif RS - TOTAL_TARIF) / Tarif RS * 100%`. Aturan severity/LOS merupakan penapisan untuk telaah petugas, bukan kesimpulan kesalahan klaim. Nilai tarif dan persentase pada ekspor Excel disimpan sebagai angka agar bisa dihitung kembali.
+
 ### 1. Review Jumlah Berkas
 
 Secara umum proses ini mencocokkan data klaim dengan daftar/path PDF. Untuk acuan Excel, aplikasi tidak membaca isi PDF.
@@ -120,15 +126,17 @@ Yang dicek:
 
 Output export: `hasil_review_jumlah_berkas.xlsx`.
 
+Kolom `Temuan` dan filter temuan mencakup seluruh masalah per SEP. Duplikat atau salah folder tidak menghentikan pemeriksaan LIP/ICD yang tersedia. `Status Akhir` menunjukkan masalah dengan prioritas utama. Halaman LIP dicari di seluruh PDF; halaman lain tidak dipakai sebagai pengganti LIP.
+
 ### 2. Review Isi Berkas
 
-Proses ini membaca teks digital PDF dan mendeteksi apakah PDF juga memuat halaman/gambar hasil scan. Aplikasi tidak menjalankan OCR.
+Proses ini membaca teks digital PDF dan mendeteksi halaman/gambar hasil scan. OCR dapat diaktifkan untuk membaca judul pada halaman scan.
 
 Review isi berkas memproses beberapa PDF sekaligus secara otomatis dengan batas worker konservatif (maks. 4 worker tanpa OCR, maks. 2 worker dengan OCR) agar lebih cepat pada batch besar tanpa membebani komputer secara berlebihan.
 
 Mode scan isi PDF:
 
-- `Tanpa OCR`: mode cepat seperti sebelumnya. Komponen yang dicek adalah SEP, LIP, Rincian Tagihan, dan Hasil Scan.
+- `Tanpa OCR`: membaca teks digital dan mendeteksi gambar. Judul dokumen dapat dikenali bila berupa teks digital.
 - `Dengan OCR`: aplikasi memakai PaddleOCR 3.x (model **PP-OCRv6_small**) hanya pada bagian **1/3 atas** halaman scan tanpa teks digital, untuk mendeteksi judul Resume Medis, Triage, Surat Perintah Rawat Inap, Hasil Pemeriksaan, dan Pemeriksaan Radiologi. OCR berhenti lebih awal jika semua judul sudah terdeteksi.
 
 Pada mode OCR, halaman yang teks digitalnya sudah terbaca tidak diproses OCR. OCR membutuhkan dependency lebih besar (`paddlepaddle` >= 3.3 dan `paddleocr` >= 3.7) dan proses pertama kali bisa lebih lama karena model OCR perlu diunduh/disiapkan. Untuk batch OCR di mesin RAM terbatas, kurangi jumlah PDF sekaligus atau tutup aplikasi lain.
@@ -145,12 +153,18 @@ Yang dicek:
 - Rincian Tagihan.
 - Hasil Scan.
 
-Rincian Tagihan dideteksi dari dokumen billing/rincian biaya atau kata kunci barang, jasa, dan fasilitas.
+Rincian Tagihan membutuhkan penanda khusus rincian biaya/tagihan atau judul BILLING. Kata INA-CBG, total tarif, barang, jasa, atau fasilitas saja tidak cukup.
 Hasil Scan dideteksi dari keberadaan gambar/halaman scan di PDF, bukan dari pembacaan isi gambar.
 
 Review isi berkas tidak membutuhkan Excel atau `list_berkas_klaim.txt`. Hasilnya satu baris per PDF yang diperiksa.
 
 Output export: `hasil_review_isi_berkas.xlsx`.
+
+### Hasil dan tindak lanjut
+
+Hasil mencantumkan sumber dan waktu proses. Perubahan input, mode, atau checklist membuat hasil sebelumnya kedaluwarsa; jalankan ulang sebelum mengekspor. Jika isi folder di disk berubah tanpa perubahan path, jalankan ulang pemeriksaan secara manual.
+
+Tab `Tindak lanjut` menggabungkan temuan terbaru per SEP dari ketiga fungsi. Isi petugas, catatan koreksi, dan status penyelesaian, lalu unduh Excel sebelum menutup aplikasi. Catatan bertahan selama sesi; temuan yang berubah perlu ditinjau ulang. Status petugas tidak mengubah hasil pemeriksaan otomatis.
 
 ## Akses Domain Cloudflare
 
@@ -226,28 +240,17 @@ Jika path di list berasal dari komputer Windows lain dan tidak bisa diakses dari
 
 Pada tab `Review Jumlah Berkas`, status `Lengkap` berarti jumlah/path PDF sudah sesuai. Pada tab `Review Isi Berkas`, status `Lengkap` berarti komponen wajib di dalam PDF terdeteksi lengkap.
 
-Komponen PDF yang dicek tanpa OCR:
+Checklist berlaku terpisah dari pilihan OCR:
 
-- SEP
-- LIP / Berkas Klaim Individual Pasien
-- Rincian Tagihan
-- Hasil Scan
-
-Komponen PDF yang dicek dengan OCR:
-
-- SEP
-- LIP / Berkas Klaim Individual Pasien
-- Rincian Tagihan
-- Resume Medis
-- Triage
-- Surat Perintah Rawat Inap
-- Hasil Pemeriksaan
-- Pemeriksaan Radiologi
+- Rawat inap: SEP, LIP, rincian tagihan, resume medis, dan SPRI.
+- Rawat jalan: SEP, LIP, dan rincian tagihan.
+- Petugas dapat mengubah dokumen tambahan sesuai SOP/kasus; dokumen yang tidak diwajibkan bertanda `Tidak berlaku`. Pisahkan batch bila persyaratan antar-kasus berbeda.
+- `Bukti Halaman` memuat nomor halaman mulai dari 1. Perbedaan SEP nama file dan isi, beberapa SEP dalam satu PDF, atau kegagalan pembacaan memerlukan review manual.
 
 ## 6. Keterbatasan
 
 - Deteksi SEP, LIP, dan Rincian Tagihan berbasis teks digital dan keyword.
-- Aplikasi tidak membaca teks di dalam gambar scan karena OCR dinonaktifkan.
+- Tanpa OCR, aplikasi tidak membaca teks di dalam gambar scan. OCR hanya membaca bagian atas halaman sehingga judul di bagian lain dapat terlewat.
 - Hasil Scan hanya memastikan ada gambar/halaman scan di PDF, bukan memvalidasi isi klinis hasil scan.
 - Aplikasi tidak memvalidasi tanda tangan, cap/stempel, validitas klinis resume, atau validitas medis hasil lab.
 - Aplikasi tidak memperbaiki PDF rusak dan tidak membuka file yang path-nya tidak dapat diakses oleh komputer/server Streamlit.

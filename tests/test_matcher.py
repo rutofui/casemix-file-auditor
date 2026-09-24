@@ -21,6 +21,7 @@ from src.matcher import (
     _folder_status,
     build_file_review,
     build_orphan_pdf_table,
+    build_pdf_content_review,
 )
 from src.pdf_checker import FirstPageCodeCheckResult
 from src.pdf_checker import LipMetadataCheckResult
@@ -257,10 +258,22 @@ class TestBuildFileReviewWithIcdCheck:
 
         review_df, _, _ = build_file_review(claims, files, icd_check_results=icd_results)
 
-        assert review_df.loc[0, "Status Akhir"] == STATUS_ICD_TIDAK_SESUAI
-        assert review_df.loc[0, "ICD-10 Sesuai"] == "Tidak"
-        assert review_df.loc[0, "ICD-9-CM Sesuai"] == "Tidak"
+        assert review_df.loc[0, "Status Akhir"] == "Perlu Review Manual"
+        assert review_df.loc[0, "ICD-10 Sesuai"] == "-"
+        assert review_df.loc[0, "ICD-9-CM Sesuai"] == "-"
+        assert review_df.loc[0, "Kode Tidak Ditemukan di PDF"] == ""
         assert "tidak dapat dibaca" in review_df.loc[0, "Catatan"].lower()
+
+    def test_wrong_folder_still_reports_icd_mismatch(self):
+        sep = "0132R0770626V000067"
+        claims = pd.DataFrame([_make_claim(sep, tanggal_pulang="2026-06-06")])
+        files = pd.DataFrame([_make_folder_entry(sep, day="05")])
+        icd = {sep: FirstPageCodeCheckResult(readable=True, icd10_missing=["E86"], icd9_missing=[])}
+
+        review_df, _, _ = build_file_review(claims, files, icd_check_results=icd)
+
+        assert review_df.loc[0, "Status Akhir"] == STATUS_SALAH_FOLDER
+        assert review_df.loc[0, "Temuan"] == "Salah Folder; Kode ICD Tidak Sesuai"
 
     def test_duplikat_status_wins_over_icd_check(self):
         sep = "0132R0770626V000063"
@@ -299,14 +312,15 @@ class TestBuildFileReviewWithIcdCheck:
 
         assert review_df.loc[0, "Status Akhir"] == STATUS_SALAH_FOLDER
 
-    def test_sep_missing_from_icd_results_is_not_penalized(self):
+    def test_missing_icd_result_requires_manual_review(self):
         sep = "0132R0770626V000065"
         claims = pd.DataFrame([_make_claim(sep)])
         files = pd.DataFrame([_make_folder_entry(sep)])
 
         review_df, _, _ = build_file_review(claims, files, icd_check_results={})
 
-        assert review_df.loc[0, "Status Akhir"] == STATUS_LENGKAP
+        assert review_df.loc[0, "Status Akhir"] == "Perlu Review Manual"
+        assert "tidak menghasilkan data" in review_df.loc[0, "Catatan"]
 
     def test_no_icd_check_keeps_original_columns(self):
         sep = "0132R0770626V000066"
@@ -333,6 +347,7 @@ class TestBuildFileReviewWithLipMetadata:
                 tanggal_masuk_match=True,
                 tanggal_keluar_match=True,
                 kelas_perawatan_match=True,
+                lip_page_number=1,
             )
         }
 
@@ -357,6 +372,7 @@ class TestBuildFileReviewWithLipMetadata:
                 tanggal_masuk_match=False,
                 tanggal_keluar_match=True,
                 kelas_perawatan_match=False,
+                lip_page_number=1,
             )
         }
 
@@ -366,3 +382,69 @@ class TestBuildFileReviewWithLipMetadata:
         assert review_df.loc[0, "Tanggal Masuk Sesuai"] == "Tidak"
         assert review_df.loc[0, "Kelas Perawatan Sesuai"] == "Tidak"
         assert summary["Data LIP tidak sesuai"] == 1
+
+    def test_missing_lip_data_is_manual_not_mismatch(self):
+        sep = "0132R0770626V000072"
+        claims = pd.DataFrame([_make_claim(sep, tanggal_masuk="2026-06-01", kelas_perawatan="Kelas II")])
+        files = pd.DataFrame([_make_folder_entry(sep)])
+        lip = {sep: LipMetadataCheckResult(readable=True, lip_page_number=1)}
+
+        review_df, _, summary = build_file_review(claims, files, lip_metadata_results=lip)
+
+        assert review_df.loc[0, "Status Akhir"] == "Perlu Review Manual"
+        assert summary["Data LIP tidak sesuai"] == 0
+        assert "tidak tersedia" in review_df.loc[0, "Catatan"]
+
+
+class TestBuildPdfContentReviewIdentityAndChecklist:
+    def _review(self, filename_sep, result, required_components=None):
+        entry = build_file_entry(
+            f"{filename_sep}.pdf", source="upload", is_index_source=False, is_content_source=True
+        )
+        files = pd.DataFrame([entry])
+        return build_pdf_content_review(
+            files, {entry["source_id"]: result}, required_components=required_components
+        )[0]
+
+    def test_filename_sep_mismatch_requires_manual_review(self):
+        review = self._review(
+            "0132R0770626V000080",
+            {"readable": True, "sep_values": ["0132R0770626V000081"], "needs_manual_review": False},
+        )
+
+        assert review.loc[0, "Status Akhir"] == "Perlu Review Manual"
+        assert "berbeda" in review.loc[0, "Catatan"]
+        assert review.loc[0, "SEP Dalam PDF"] == "0132R0770626V000081"
+
+    def test_multiple_pdf_seps_require_manual_review(self):
+        sep = "0132R0770626V000082"
+        review = self._review(
+            sep,
+            {"readable": True, "sep_values": [sep, "0132R0770626V000083"], "needs_manual_review": False},
+        )
+
+        assert review.loc[0, "Status Akhir"] == "Perlu Review Manual"
+        assert "Lebih dari satu" in review.loc[0, "Catatan"]
+
+    def test_pages_and_custom_unselected_components_are_visible(self):
+        sep = "0132R0770626V000084"
+        checklist = ["SEP Terdeteksi Dalam PDF", "LIP Terdeteksi", "Rincian Tagihan Terdeteksi"]
+        review = self._review(
+            sep,
+            {
+                "readable": True,
+                "sep_values": [sep],
+                "lip_detected": True,
+                "billing_detected": True,
+                "document_titles": [],
+                "component_pages": {"SEP": [1], "LIP": [2]},
+                "needs_manual_review": False,
+            },
+            required_components=checklist,
+        )
+
+        assert review.loc[0, "Status Akhir"] == STATUS_LENGKAP
+        assert review.loc[0, "Resume Medis"] == "Tidak berlaku"
+        assert review.loc[0, "Hasil Scan Terdeteksi"] == "Tidak berlaku"
+        assert review.loc[0, "Bukti Halaman"] == "SEP: 1; LIP: 2"
+        assert review.loc[0, "SEP Terdeteksi Dalam PDF"] == "Ya"

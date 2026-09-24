@@ -16,7 +16,7 @@ from typing import Any
 from .config import (
     BILLING_KEYWORDS,
     DOCUMENT_TITLE_KEYWORDS,
-    LIP_KEYWORDS,
+    LIP_EVIDENCE_KEYWORDS,
     PDFCheckConfig,
     SEP_KEYWORDS,
     code_present_in_text,
@@ -50,6 +50,7 @@ class PDFCheckResult:
     needs_manual_review: bool = False
     error: str = ""
     notes: list[str] = field(default_factory=list)
+    component_pages: dict[str, list[int]] = field(default_factory=dict)
 
 
 @dataclass
@@ -69,6 +70,7 @@ class LipMetadataCheckResult:
     tanggal_masuk_match: bool | None = None
     tanggal_keluar_match: bool | None = None
     kelas_perawatan_match: bool | None = None
+    lip_page_number: int | None = None
     error: str = ""
     notes: list[str] = field(default_factory=list)
 
@@ -82,6 +84,42 @@ def check_lip_metadata(
 ) -> LipMetadataCheckResult:
     if not local_paths:
         return LipMetadataCheckResult(readable=False, error="Tidak ada path PDF untuk diperiksa.")
+    if len(local_paths) > 1:
+        results = [
+            check_lip_metadata(
+                [path],
+                expected_tanggal_masuk=expected_tanggal_masuk,
+                expected_tanggal_keluar=expected_tanggal_keluar,
+                expected_kelas_perawatan=expected_kelas_perawatan,
+            )
+            for path in local_paths
+        ]
+
+        def aggregate_match(key: str, value_key: str) -> bool | None:
+            values = [
+                getattr(result, key) if getattr(result, value_key) else None
+                for result in results
+            ]
+            return False if False in values else (None if any(value is None for value in values) else True)
+
+        return LipMetadataCheckResult(
+            readable=all(
+                result.readable
+                and (not expected_tanggal_masuk or bool(result.tanggal_masuk_lip))
+                and (not expected_tanggal_keluar or bool(result.tanggal_keluar_lip))
+                and (not expected_kelas_perawatan or bool(result.kelas_perawatan_lip))
+                for result in results
+            ),
+            tanggal_masuk_lip=" | ".join(_unique_preserve_order([r.tanggal_masuk_lip for r in results])),
+            tanggal_keluar_lip=" | ".join(_unique_preserve_order([r.tanggal_keluar_lip for r in results])),
+            kelas_perawatan_lip=" | ".join(_unique_preserve_order([r.kelas_perawatan_lip for r in results])),
+            tanggal_masuk_match=aggregate_match("tanggal_masuk_match", "tanggal_masuk_lip"),
+            tanggal_keluar_match=aggregate_match("tanggal_keluar_match", "tanggal_keluar_lip"),
+            kelas_perawatan_match=aggregate_match("kelas_perawatan_match", "kelas_perawatan_lip"),
+            lip_page_number=next((r.lip_page_number for r in results if r.lip_page_number), None),
+            error="; ".join(_unique_preserve_order([r.error for r in results])),
+            notes=_unique_preserve_order([note for r in results for note in r.notes]),
+        )
 
     try:
         import fitz  # PyMuPDF
@@ -89,6 +127,8 @@ def check_lip_metadata(
         return LipMetadataCheckResult(readable=False, error=f"PyMuPDF belum tersedia: {exc}")
 
     page_texts: list[str] = []
+    page_numbers: list[int] = []
+    page_locations: list[str] = []
     errors: list[str] = []
     for local_path in local_paths:
         path = Path(local_path)
@@ -101,9 +141,12 @@ def check_lip_metadata(
             errors.append(f"PDF gagal dibuka: {exc}")
             continue
         try:
-            max_pages = min(document.page_count, 3)
-            for page_index in range(max_pages):
-                page_texts.append(document.load_page(page_index).get_text("text") or "")
+            for page_index in range(document.page_count):
+                page_text = document.load_page(page_index).get_text("text") or ""
+                page_texts.append(page_text)
+                if _is_lip_page(page_text):
+                    page_numbers.append(page_index + 1)
+                    page_locations.append(f"LIP: {path.name}, halaman {page_index + 1}")
         except Exception as exc:
             errors.append(f"Halaman PDF gagal dibaca: {exc}")
         finally:
@@ -114,7 +157,7 @@ def check_lip_metadata(
         return LipMetadataCheckResult(
             readable=False,
             error="Halaman LIP tidak terbaca dari teks digital PDF.",
-            notes=_unique_preserve_order(errors),
+            notes=_unique_preserve_order([*errors, *page_locations]),
         )
 
     detected_tanggal_masuk = _extract_labeled_date(lip_text, ["Tanggal Masuk", "Tgl Masuk", "Tgl. Masuk"])
@@ -128,13 +171,14 @@ def check_lip_metadata(
     )
 
     result = LipMetadataCheckResult(
-        readable=True,
+        readable=not errors,
         tanggal_masuk_lip=detected_tanggal_masuk,
         tanggal_keluar_lip=detected_tanggal_keluar,
         kelas_perawatan_lip=detected_kelas,
         tanggal_masuk_match=_compare_dates(expected_tanggal_masuk, detected_tanggal_masuk),
         tanggal_keluar_match=_compare_dates(expected_tanggal_keluar, detected_tanggal_keluar),
         kelas_perawatan_match=_compare_care_class(expected_kelas_perawatan, detected_kelas),
+        lip_page_number=page_numbers[0] if page_numbers else None,
         error="; ".join(_unique_preserve_order(errors)),
     )
     if expected_tanggal_masuk and not detected_tanggal_masuk:
@@ -143,6 +187,7 @@ def check_lip_metadata(
         result.notes.append("Tanggal keluar tidak ditemukan di LIP.")
     if expected_kelas_perawatan and not detected_kelas:
         result.notes.append("Kelas perawatan tidak ditemukan di LIP.")
+    result.notes.extend(page_locations)
     return result
 
 
@@ -152,9 +197,8 @@ def check_first_page_codes(
     icd9_codes: list[str],
 ) -> FirstPageCodeCheckResult:
     """Check whether ICD-10/ICD-9-CM codes are present on the first page of
-    one or more matched PDF files (digital text only, no OCR). When multiple
-    paths are given (duplicate PDFs for one SEP), text is unioned across all
-    of them before checking presence.
+    each matched PDF file (digital text only, no OCR). Missing codes are
+    combined across files so a code absent from any duplicate remains visible.
     """
     if not local_paths:
         return FirstPageCodeCheckResult(
@@ -162,6 +206,14 @@ def check_first_page_codes(
             icd10_missing=list(icd10_codes),
             icd9_missing=list(icd9_codes),
             error="Tidak ada path PDF untuk diperiksa.",
+        )
+    if len(local_paths) > 1:
+        results = [check_first_page_codes([path], icd10_codes, icd9_codes) for path in local_paths]
+        return FirstPageCodeCheckResult(
+            readable=all(result.readable for result in results),
+            icd10_missing=[code for code in icd10_codes if any(code in r.icd10_missing for r in results)],
+            icd9_missing=[code for code in icd9_codes if any(code in r.icd9_missing for r in results)],
+            error="; ".join(_unique_preserve_order([result.error for result in results])),
         )
 
     try:
@@ -191,8 +243,9 @@ def check_first_page_codes(
         try:
             if document.page_count > 0:
                 page = document.load_page(0)
-                combined_text_parts.append(page.get_text("text") or "")
-                any_readable = True
+                page_text = page.get_text("text") or ""
+                combined_text_parts.append(page_text)
+                any_readable = any_readable or bool(page_text.strip())
         except Exception as exc:
             errors.append(f"Halaman pertama PDF gagal dibaca: {exc}")
         finally:
@@ -211,7 +264,7 @@ def check_first_page_codes(
     icd9_missing = [code for code in icd9_codes if not code_present_in_text(combined_text, code)]
 
     return FirstPageCodeCheckResult(
-        readable=True,
+        readable=not errors,
         icd10_missing=icd10_missing,
         icd9_missing=icd9_missing,
         error="; ".join(_unique_preserve_order(errors)),
@@ -220,9 +273,25 @@ def check_first_page_codes(
 
 def _select_lip_text(page_texts: list[str]) -> str:
     for text in page_texts:
-        if contains_keyword(text, LIP_KEYWORDS):
+        if _is_lip_page(text):
             return text
-    return page_texts[0] if page_texts else ""
+    return ""
+
+
+def _is_lip_page(text: str) -> bool:
+    if contains_keyword(text, LIP_EVIDENCE_KEYWORDS):
+        return True
+    header = "\n".join(text.splitlines()[:12])
+    return bool(
+        re.search(r"(?im)^\s*LIP\s*$", header)
+        and re.search(r"(?i)Tanggal\s+(Masuk|Keluar)|Kelas\s+(Perawatan|Rawat)", text)
+    )
+
+
+def _has_billing_evidence(text: str) -> bool:
+    return contains_keyword(text, BILLING_KEYWORDS) or bool(
+        re.search(r"(?im)^\s*BILLING\s*$", text)
+    )
 
 
 def _extract_labeled_date(text: str, labels: list[str]) -> str:
@@ -332,12 +401,31 @@ def detect_pdf_components(
         )
     else:
         document_titles = detect_document_titles_from_pages([text])
+    pages = page_texts if page_texts is not None else [text]
+    component_pages: dict[str, list[int]] = {}
+    for page_number, page_text in enumerate(pages, start=1):
+        if extract_sep_values(page_text):
+            component_pages.setdefault("SEP Terdeteksi Dalam PDF", []).append(page_number)
+        if _is_lip_page(page_text):
+            component_pages.setdefault("LIP Terdeteksi", []).append(page_number)
+        if _has_billing_evidence(page_text):
+            component_pages.setdefault("Rincian Tagihan Terdeteksi", []).append(page_number)
+        for title in detect_document_titles_on_page(
+            page_text,
+            header_only_ocr=bool(
+                header_only_ocr_pages
+                and page_number <= len(header_only_ocr_pages)
+                and header_only_ocr_pages[page_number - 1]
+            ),
+        ):
+            component_pages.setdefault(title, []).append(page_number)
     return {
         "sep_values": extract_sep_values(text),
         "sep_keyword_detected": contains_keyword(normalized, SEP_KEYWORDS),
-        "lip_detected": contains_keyword(normalized, LIP_KEYWORDS),
-        "billing_detected": contains_keyword(normalized, BILLING_KEYWORDS),
+        "lip_detected": bool(component_pages.get("LIP Terdeteksi")),
+        "billing_detected": any(_has_billing_evidence(page) for page in pages),
         "document_titles": document_titles,
+        "component_pages": component_pages,
     }
 
 
@@ -378,19 +466,33 @@ def check_pdf(
     try:
         result.page_count = document.page_count
         for page_index in range(document.page_count):
-            page = document.load_page(page_index)
-            page_text = page.get_text("text") or ""
+            try:
+                page = document.load_page(page_index)
+                page_text = page.get_text("text") or ""
+            except Exception as exc:
+                result.needs_manual_review = True
+                result.notes.append(f"Halaman {page_index + 1} gagal dibaca: {exc}")
+                page_contents.append("")
+                header_only_ocr_pages.append(False)
+                continue
             page_combined = page_text
             header_only_ocr = False
-            page_has_scan = _page_has_scan(page, page_text, config)
+            try:
+                page_has_scan = _page_has_scan(page, page_text, config)
+            except Exception as exc:
+                page_has_scan = False
+                result.needs_manual_review = True
+                result.notes.append(f"Gagal memeriksa gambar halaman {page_index + 1}: {exc}")
             if page_has_scan:
                 result.scan_page_count += 1
+                result.component_pages.setdefault("Hasil Scan Terdeteksi", []).append(page_index + 1)
             all_titles_found = titles_found >= all_title_categories
             if config.use_ocr and not all_titles_found and _page_needs_ocr(page, page_text, config, page_has_scan):
                 try:
                     ocr_engine = _get_paddleocr_engine(config)
                     result.ocr_available = True
                 except Exception as exc:
+                    result.needs_manual_review = True
                     result.notes.append(
                         "PaddleOCR belum siap, halaman scan tidak diproses OCR: "
                         f"{exc}"
@@ -399,7 +501,15 @@ def check_pdf(
                     header_only_ocr_pages.append(False)
                     titles_found.update(detect_document_titles_on_page(page_combined))
                     continue
-                ocr_text = _ocr_page(page, ocr_engine, config)
+                try:
+                    ocr_text = _ocr_page(page, ocr_engine, config)
+                except Exception as exc:
+                    result.needs_manual_review = True
+                    result.notes.append(f"OCR gagal pada halaman {page_index + 1}: {exc}")
+                    page_contents.append(page_combined)
+                    header_only_ocr_pages.append(False)
+                    titles_found.update(detect_document_titles_on_page(page_combined))
+                    continue
                 if ocr_text.strip():
                     ocr_page_texts.append(ocr_text)
                     header_only_ocr = True
@@ -429,14 +539,17 @@ def check_pdf(
         result.billing_detected = bool(components["billing_detected"])
         result.scan_detected = result.scan_page_count > 0
         result.document_titles = list(components["document_titles"])
+        for name, pages in components["component_pages"].items():
+            result.component_pages.setdefault(name, []).extend(pages)
 
         if result.text_char_count < config.min_pdf_text_chars:
             result.notes.append("Teks digital PDF terlalu sedikit; pastikan SEP/LIP/Rincian Tagihan terbaca.")
+            result.needs_manual_review = True
         if config.use_ocr and result.scan_page_count and result.ocr_page_count:
             skipped = result.scan_page_count - result.ocr_page_count
             note = f"OCR dipakai pada {result.ocr_page_count} halaman scan."
             if skipped > 0:
-                note += f" {skipped} halaman scan dilewati (semua komponen sudah terdeteksi)."
+                note += f" {skipped} halaman scan tidak memerlukan OCR atau tidak menghasilkan teks OCR."
             result.notes.append(note)
     finally:
         document.close()
@@ -448,10 +561,7 @@ def _page_has_scan(page: object, page_text: str, config: PDFCheckConfig) -> bool
     image_area = 0.0
     page_area = max(float(page.rect.width * page.rect.height), 1.0)
 
-    try:
-        image_infos = page.get_image_info(xrefs=True)
-    except Exception:
-        image_infos = []
+    image_infos = page.get_image_info(xrefs=True)
 
     for image_info in image_infos:
         bbox = image_info.get("bbox")
