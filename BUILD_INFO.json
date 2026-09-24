@@ -1,5 +1,5 @@
 {
-  "built_at": "2026-07-02T16:42:50+07:00",
-  "commit_sha": "d162c90",
-  "commit_message": "simplify pdf merge without page reordering"
+  "built_at": "2026-09-24T20:16:31+07:00",
+  "commit_sha": "f6a765d",
+  "commit_message": "Remove PDF merge and rename features"
 }
