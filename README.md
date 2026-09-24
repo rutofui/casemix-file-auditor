@@ -1,6 +1,6 @@
 # Casemix File Auditor
 
-Aplikasi web lokal untuk membantu tim casemix rumah sakit mereview berkas klaim JKN sebelum diajukan. Aplikasi memisahkan beberapa proses kerja: analisis TXT e-Klaim, review kelengkapan jumlah berkas, review kelengkapan isi berkas, merge PDF berkas, dan rename PDF berdasarkan SEP.
+Aplikasi web lokal untuk membantu tim casemix rumah sakit mereview berkas klaim JKN sebelum diajukan. Aplikasi memisahkan tiga proses kerja: analisis TXT e-Klaim, review kelengkapan jumlah berkas, dan review kelengkapan isi berkas.
 
 Data diproses lokal di komputer user. Data klaim pasien tidak dikirim ke cloud. Aplikasi hanya memeriksa metadata versi terbaru dari GitHub saat fitur cek pembaruan dijalankan.
 
@@ -151,35 +151,6 @@ Hasil Scan dideteksi dari keberadaan gambar/halaman scan di PDF, bukan dari pemb
 Review isi berkas tidak membutuhkan Excel atau `list_berkas_klaim.txt`. Hasilnya satu baris per PDF yang diperiksa.
 
 Output export: `hasil_review_isi_berkas.xlsx`.
-
-### 3. Merge PDF Berkas
-
-Fitur ini menggabungkan PDF dari dua folder sumber berdasarkan nama file yang sama. Aplikasi hanya memproses file `.pdf` yang ada di kedua folder; file yang hanya ada di salah satu folder atau nama file duplikat dalam satu sumber akan dicatat sebagai `Dilewati`.
-
-Input:
-
-- Folder Sumber A.
-- Folder Sumber B.
-- Folder Output.
-- Opsi `Timpa file output jika sudah ada`.
-
-Output berupa satu PDF baru per pasangan file, disimpan ke Folder Output dengan nama file yang sama. File sumber tidak diubah. Urutan halaman tidak diubah: semua halaman dari Folder Sumber A dimasukkan terlebih dahulu sesuai urutan asli, lalu semua halaman dari Folder Sumber B sesuai urutan asli.
-
-Fitur merge tidak membaca isi PDF, tidak menjalankan OCR, dan tidak mengklasifikasi atau menyusun ulang halaman.
-
-### 4. Rename PDF SEP
-
-Fitur ini mengubah nama banyak file PDF sekaligus berdasarkan nomor SEP yang terbaca dari teks digital di dalam PDF.
-
-Input:
-
-- Folder PDF Lokal.
-
-Aplikasi akan mencari semua file `.pdf` secara rekursif sampai subfolder terdalam. File yang berhasil dibaca akan di-rename langsung di folder asal menjadi `{NO_SEP}.pdf`. Jika nama target sudah ada, aplikasi menambahkan suffix otomatis seperti `{NO_SEP}_2.pdf`.
-
-Fitur ini tidak memakai OCR. PDF scan gambar tanpa teks digital akan dilewati atau ditandai gagal bila file tidak bisa dibaca.
-
-Output export: `hasil_rename_pdf_sep.xlsx`.
 
 ## Akses Domain Cloudflare
 
