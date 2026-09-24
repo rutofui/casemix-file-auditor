@@ -248,8 +248,8 @@ def test_build_eklaim_analysis_flags() -> None:
     assert len(analysis.severity_low_los_high_df) == 1
     assert analysis.severity_low_los_high_df.iloc[0]["NAMA_PASIEN"] == "PASIEN SEV LOW"
     assert len(analysis.completeness_df) == 2
-    assert len(analysis.grouper_gt_rs_df) == 1
-    assert len(analysis.selisih_gt_30pct_df) == 1
+    assert len(analysis.grouper_gt_rs_df.query("`Basis Tarif` == 'INA-CBG'")) == 1
+    assert len(analysis.selisih_gt_30pct_df.query("`Basis Tarif` == 'INA-CBG'")) == 1
     assert len(analysis.intensive_care_df) == 1
 
 

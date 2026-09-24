@@ -99,9 +99,17 @@ Browser akan membuka aplikasi Streamlit. Jika tidak terbuka otomatis, buka URL y
 
 ### Analisis TXT e-Klaim
 
-Kelompok rawat inap/rawat jalan ditentukan oleh PTD dalam data, bukan kotak upload. PTD di luar 1/2 dipisahkan untuk koreksi. Ringkasan kualitas data menampilkan SEP unik valid, SEP kosong/tidak valid, angka kosong/tidak valid, dan cakupan cost weight. Data bermasalah tetap ditampilkan untuk perbaikan tanpa menghentikan seluruh batch.
+Kelompok rawat inap/rawat jalan ditentukan oleh PTD dalam data, bukan kotak upload. Struktur kolom yang rusak ditolak dengan sumber dan nomor baris. SEP tidak valid, PTD di luar 1/2, dan seluruh baris dengan SEP yang saling konflik masuk karantina. Salinan klaim yang benar-benar identik dihitung sekali; rincian duplikat tetap tersedia. Kualitas data memeriksa seluruh input, sedangkan KPI memakai klaim di luar karantina.
 
-Persentase selisih memakai `(Tarif RS - TOTAL_TARIF) / Tarif RS * 100%`. Aturan severity/LOS merupakan penapisan untuk telaah petugas, bukan kesimpulan kesalahan klaim. Nilai tarif dan persentase pada ekspor Excel disimpan sebagai angka agar bisa dihitung kembali.
+Tarif RS, INA-CBG (`TOTAL_TARIF`), dan iDRG (`C2.idrg.total_tarif`) ditampilkan berdampingan. Setiap total dilengkapi jumlah klaim dan cakupan; nilai tidak lengkap adalah subtotal parsial. Selisih dihitung dari pasangan tarif valid. Persentase RS terhadap grouper memakai total Tarif RS pasangan tersebut; perubahan iDRG terhadap INA-CBG memakai total INA-CBG pasangan tersebut. Penyebut nol tidak menghasilkan persentase. Selisih tarif bukan biaya aktual, laba/rugi, atau bukti pembayaran.
+
+CMI iDRG memakai rata-rata `cost_weight` valid, dengan penyebut, cakupan, dan versi bobot. `total_cost_weight` ditampilkan terpisah. Tanpa bobot valid atau bila versi berbeda, CMI gabungan tidak tersedia; profil per versi tetap ditampilkan. CMI INA-CBG memerlukan referensi bobot INA-CBG tersendiri.
+
+Hasil tambahan mencakup aktivitas DPJP, pasien unik, ALOS/median/P90 rawat inap, komponen tarif RS dan top-up INA-CBG, profil kelompok kasus/kelas rawat, ICU/ventilator, kunjungan berulang rawat jalan, aktivitas harian/bulanan, serta kode status pulang. Perubahan bulanan hanya dihitung untuk bulan yang berurutan dalam file; cakupan seluruh pelayanan RS tidak diasumsikan. Jumlah pasien unik antar-DPJP tidak dapat langsung dijumlahkan.
+
+Validasi meliputi identitas kosong, domain angka, tanggal/LOS, ICU, JSON C2, kode berulang, dan rekonsiliasi komponen tarif. LOS tidak dikoreksi otomatis. Aturan severity/LOS merupakan penapisan untuk telaah petugas, bukan kesimpulan kesalahan klaim. Produktivitas per jam/FTE, BOR/BTO/TOI, indeks efisiensi LOS, readmission terverifikasi, dan margin biaya memerlukan data tambahan yang dijelaskan dalam metodologi.
+
+Excel memuat seluruh tabel beserta sumber, waktu proses, periode, versi, definisi, dan cakupan. Tarif dan persentase tetap numerik; teks dari input tidak dieksekusi sebagai formula Excel. Temuan kualitas, karantina, dan kedua basis tarif ikut tab tindak lanjut.
 
 ### 1. Review Jumlah Berkas
 

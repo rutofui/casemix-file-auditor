@@ -52,6 +52,14 @@ def render_follow_up_tab() -> None:
                 "intensive_care_df", "grouper_gt_rs_df", "selisih_gt_30pct_df",
             ):
                 frames.append((label, getattr(analysis, field, pd.DataFrame())))
+            for field, title in (
+                ("duplicate_claims_df", "SEP duplikat"),
+                ("quarantine_df", "Klaim dikarantina"),
+                ("validation_df", "Validasi nilai"),
+            ):
+                frame = getattr(analysis, field, None)
+                if frame is not None and not frame.empty:
+                    frames.append((f"{label} · {title}", frame))
         else:
             frames.append((label, st.session_state.get(f"{prefix}_review_df")))
             if prefix == "file":

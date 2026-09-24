@@ -75,3 +75,11 @@ def test_nan_is_blank_in_idr_display_and_excel():
     assert workbook["selisih_lebih_30pct"]["B2"].value is None
     assert workbook["peringatan"]["A2"].value == "Tarif parsial"
     assert workbook["ptd_tidak_valid"]["A1"].value == "SEP"
+
+
+def test_metadata_display_uses_text_without_changing_export_numbers():
+    frame = pd.DataFrame({"Metrik": ["Sumber", "Baris masuk", "Kosong"], "Nilai": ["uji.txt", 2, None]})
+    display = format_analysis_frame_for_display(frame)
+    assert display["Nilai"].tolist() == ["uji.txt", "2", ""]
+    workbook = load_workbook(BytesIO(export_eklaim_analysis_to_excel(EklaimAnalysisResult(metadata_df=frame))))
+    assert workbook["metadata"]["B3"].value == 2

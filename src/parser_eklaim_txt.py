@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import csv
+import io
 import json
 import re
 from dataclasses import dataclass, field
-from typing import BinaryIO
+from pathlib import Path
+from typing import BinaryIO, TextIO
 
 import pandas as pd
 
@@ -34,12 +37,26 @@ NUMERIC_COLUMNS = [
     "TOTAL_TARIF",
     "TARIF_RS",
     "TARIF_INACBG",
+    "TARIF_POLI_EKS",
     "LOS",
     "ICU_INDIKATOR",
     "ICU_LOS",
-    "RAWAT_INTENSIF",
     "VENT_HOUR",
+    "TARIF_SUBACUTE",
+    "TARIF_CHRONIC",
+    "TARIF_SP",
+    "TARIF_SR",
+    "TARIF_SI",
+    "TARIF_SD",
 ]
+
+TARIFF_COMPONENTS = [
+    "PROSEDUR_NON_BEDAH", "PROSEDUR_BEDAH", "KONSULTASI", "TENAGA_AHLI",
+    "KEPERAWATAN", "PENUNJANG", "RADIOLOGI", "LABORATORIUM",
+    "PELAYANAN_DARAH", "REHABILITASI", "KAMAR_AKOMODASI", "RAWAT_INTENSIF",
+    "OBAT", "ALKES", "BMHP", "SEWA_ALAT", "OBAT_KRONIS", "OBAT_KEMO",
+]
+NUMERIC_COLUMNS.extend(col for col in TARIFF_COMPONENTS if col not in NUMERIC_COLUMNS)
 
 
 @dataclass
@@ -50,29 +67,71 @@ class EklaimParseResult:
 
 
 def read_eklaim_txt(
-    file_obj: str | BinaryIO,
+    file_obj: str | Path | BinaryIO | TextIO,
     *,
     expected_ptd: str | None = None,
     source_label: str = "",
 ) -> EklaimParseResult:
     warnings: list[str] = []
+    source = source_label or (Path(file_obj).name if isinstance(file_obj, (str, Path)) else str(getattr(file_obj, "name", "") or ""))
     try:
-        raw_df = pd.read_csv(file_obj, sep="\t", dtype=str, keep_default_na=False)
-    except Exception as exc:
-        raise ValueError(f"File TXT e-Klaim gagal dibaca: {exc}") from exc
+        if isinstance(file_obj, (str, Path)):
+            content = Path(file_obj).read_bytes().decode("utf-8-sig")
+        else:
+            if hasattr(file_obj, "seek"):
+                file_obj.seek(0)
+            content = file_obj.read()
+            if isinstance(content, bytes):
+                content = content.decode("utf-8-sig")
+            elif content.startswith("\ufeff"):
+                content = content[1:]
+        reader = csv.reader(io.StringIO(content, newline=""), delimiter="\t", strict=True)
+        headers = next(reader, None)
+        if headers is None:
+            warnings.append(f"{source}: file tidak berisi baris klaim." if source else "File tidak berisi baris klaim.")
+            return EklaimParseResult(df=_empty_eklaim_df(), warnings=warnings, source_label=source)
+        if len(headers) != len(set(headers)):
+            raise ValueError(f"{source}: header memiliki nama kolom duplikat (baris 1).")
+        missing = [col for col in REQUIRED_COLUMNS if col not in headers]
+        if missing:
+            raise ValueError(f"{source}: kolom wajib tidak ditemukan: {', '.join(missing)} (baris 1).")
+        records = []
+        start_lines = []
+        while True:
+            row_start = reader.line_num + 1
+            try:
+                row = next(reader)
+            except StopIteration:
+                break
+            if not row:
+                continue
+            if len(row) != len(headers):
+                raise ValueError(f"{source}: jumlah field tidak sesuai header (baris {row_start}).")
+            records.append(row)
+            start_lines.append(row_start)
+    except csv.Error as exc:
+        raise ValueError(f"{source}: format CSV tidak valid (baris {reader.line_num or 1}).") from exc
+    except (OSError, UnicodeError, TypeError) as exc:
+        raise ValueError(f"{source}: file TXT e-Klaim gagal dibaca.") from exc
 
+    raw_df = pd.DataFrame(records, columns=headers, dtype=str)
     if raw_df.empty:
-        warnings.append(f"{source_label}: file tidak berisi baris klaim." if source_label else "File tidak berisi baris klaim.")
-        return EklaimParseResult(df=_empty_eklaim_df(), warnings=warnings, source_label=source_label)
-
-    missing = [col for col in REQUIRED_COLUMNS if col not in raw_df.columns]
-    if missing:
-        raise ValueError(f"Kolom wajib tidak ditemukan: {', '.join(missing)}")
+        warnings.append(f"{source}: file tidak berisi baris klaim." if source else "File tidak berisi baris klaim.")
+        return EklaimParseResult(df=_empty_eklaim_df(), warnings=warnings, source_label=source)
 
     df = raw_df.copy()
+    df["_source"] = source
+    df["_row_number"] = start_lines
     for col in NUMERIC_COLUMNS:
         if col in df.columns:
-            df[f"_{col.lower()}_num"] = df[col].map(lambda value: _safe_number(value, non_negative=col in {"LOS", "ICU_INDIKATOR", "ICU_LOS", "RAWAT_INTENSIF"}))
+            df[f"_{col.lower()}_num"] = df[col].map(
+                lambda value: _safe_number(
+                    value,
+                    non_negative=True,
+                    integer_only=col in {"LOS", "ICU_LOS"},
+                    allowed_values={0, 1} if col == "ICU_INDIKATOR" else None,
+                )
+            )
 
     df["_sep_normalized"] = df["SEP"].map(normalize_sep)
     df["_sep_valid"] = df["_sep_normalized"].map(is_valid_sep)
@@ -80,28 +139,34 @@ def read_eklaim_txt(
     df["_severity"] = df["INACBG"].map(parse_inacbg_severity)
     df["_dpjp_normalized"] = df["DPJP"].map(normalize_dpjp)
 
-    idrg_fields = df["C2"].map(extract_idrg_fields)
+    c2_results = df["C2"].map(_extract_idrg_fields_with_status)
+    idrg_fields = c2_results.map(lambda result: result["fields"])
     df["_idrg_cost_weight"] = idrg_fields.map(lambda item: item.get("cost_weight"))
+    df["_idrg_total_cost_weight"] = idrg_fields.map(lambda item: item.get("total_cost_weight"))
     df["_idrg_drg_code"] = idrg_fields.map(lambda item: item.get("drg_code", ""))
     df["_idrg_total_tarif"] = idrg_fields.map(lambda item: item.get("total_tarif"))
+    df["_idrg_grouper_version"] = idrg_fields.map(lambda item: item.get("grouper_version", ""))
+    df["_idrg_logic_version"] = idrg_fields.map(lambda item: item.get("logic_version", ""))
+    df["_c2_status"] = c2_results.map(lambda result: result["status"])
+    df["_c2_issues"] = c2_results.map(lambda result: result["issues"])
 
     invalid_sep = int((~df["_sep_valid"]).sum())
     if invalid_sep:
-        warnings.append(f"{source_label}: {invalid_sep} baris memiliki SEP kosong/tidak valid.")
+        warnings.append(f"{source}: {invalid_sep} baris memiliki SEP kosong/tidak valid.")
 
     missing_weight = int(df["_idrg_cost_weight"].isna().sum())
     if missing_weight:
-        warnings.append(f"{source_label}: {missing_weight} baris tanpa idrg.cost_weight di kolom C2.")
+        warnings.append(f"{source}: {missing_weight} baris tanpa idrg.cost_weight di kolom C2.")
 
     if expected_ptd:
         mismatch = int((df["_ptd"] != expected_ptd).sum())
         if mismatch:
             expected_label = "Rawat Inap" if expected_ptd == PTD_RAWAT_INAP else "Rawat Jalan"
             warnings.append(
-                f"{source_label}: {mismatch} baris tidak ber-PTD {expected_ptd} ({expected_label})."
+                f"{source}: {mismatch} baris tidak ber-PTD {expected_ptd} ({expected_label})."
             )
 
-    return EklaimParseResult(df=df, warnings=warnings, source_label=source_label)
+    return EklaimParseResult(df=df, warnings=warnings, source_label=source)
 
 
 def build_file_review_claims(df: pd.DataFrame) -> pd.DataFrame:
@@ -118,6 +183,7 @@ def build_file_review_claims(df: pd.DataFrame) -> pd.DataFrame:
         "No RM",
         "Nama Pasien",
         "Diagnosa",
+        "_source",
         "_row_number",
         "_no_sep_normalized",
         "_sep_valid",
@@ -135,7 +201,8 @@ def build_file_review_claims(df: pd.DataFrame) -> pd.DataFrame:
     out["No RM"] = df["MRN"].map(_safe_string)
     out["Nama Pasien"] = df["NAMA_PASIEN"].map(_safe_string)
     out["Diagnosa"] = df["DIAGLIST"].map(_safe_string)
-    out["_row_number"] = range(2, len(out) + 2)
+    out["_source"] = df["_source"] if "_source" in df else ""
+    out["_row_number"] = df["_row_number"] if "_row_number" in df else range(2, len(out) + 2)
     out["_no_sep_normalized"] = df["_sep_normalized"]
     out["_sep_valid"] = df["_sep_valid"]
     out["_icd10_codes"] = df["DIAGLIST"].map(split_codes)
@@ -192,50 +259,54 @@ def parse_c2_json_objects(c2_text: object) -> list[dict]:
         return []
 
     objects: list[dict] = []
+    decoder = json.JSONDecoder()
     index = 0
     while index < len(text):
         if text[index] != "{":
             index += 1
             continue
-        depth = 0
-        start = index
-        for position in range(index, len(text)):
-            char = text[position]
-            if char == "{":
-                depth += 1
-            elif char == "}":
-                depth -= 1
-                if depth == 0:
-                    chunk = text[start : position + 1]
-                    try:
-                        payload = json.loads(chunk)
-                    except json.JSONDecodeError:
-                        payload = None
-                    if isinstance(payload, dict):
-                        objects.append(payload)
-                    index = position + 1
-                    break
-        else:
-            break
+        try:
+            payload, end = decoder.raw_decode(text, index)
+        except json.JSONDecodeError:
+            index += 1
+            continue
+        if isinstance(payload, dict):
+            objects.append(payload)
+        index = end
     return objects
 
 
 def extract_idrg_fields(c2_text: object) -> dict[str, object]:
-    for payload in parse_c2_json_objects(c2_text):
+    return _extract_idrg_fields_with_status(c2_text)["fields"]
+
+
+def _extract_idrg_fields_with_status(c2_text: object) -> dict[str, object]:
+    text = "" if c2_text is None else str(c2_text).strip()
+    if not text or text.lower() in {"none", "nan"}:
+        return {"fields": {}, "status": "missing", "issues": []}
+    objects = parse_c2_json_objects(text)
+    if not objects:
+        return {"fields": {}, "status": "invalid", "issues": ["JSON C2 tidak valid"]}
+    issues: list[str] = []
+    for payload in objects:
         idrg = payload.get("idrg")
         if not isinstance(idrg, dict):
             continue
-        cost_weight = _safe_number(idrg.get("cost_weight"))
-        if cost_weight is None:
-            continue
-        return {
-            "cost_weight": cost_weight,
-            "total_cost_weight": _safe_number(idrg.get("total_cost_weight")),
-            "drg_code": str(idrg.get("drg_code", "") or ""),
-            "drg_description": str(idrg.get("drg_description", "") or ""),
-            "total_tarif": _safe_number(idrg.get("total_tarif")),
-        }
-    return {}
+        fields = {}
+        for field_name in ("cost_weight", "total_cost_weight", "total_tarif"):
+            value = idrg.get(field_name)
+            number = _safe_number(value, non_negative=True)
+            if number is not None:
+                fields[field_name] = number
+            else:
+                problem = "tidak ditemukan" if value is None or str(value).strip() == "" else "tidak valid"
+                issues.append(f"idrg.{field_name} {problem}")
+        fields["drg_code"] = str(idrg.get("drg_code", "") or "")
+        fields["drg_description"] = str(idrg.get("drg_description", "") or "")
+        fields["grouper_version"] = str(idrg.get("grouper_version", idrg.get("version", "")) or "")
+        fields["logic_version"] = str(idrg.get("logic_version", "") or "")
+        return {"fields": fields, "status": "valid", "issues": issues}
+    return {"fields": {}, "status": "no-idrg", "issues": []}
 
 
 def parse_inacbg_severity(inacbg_code: object) -> int | None:
@@ -277,7 +348,13 @@ def normalize_dpjp(value: object) -> str:
     return text
 
 
-def _safe_number(value: object, *, non_negative: bool = False) -> float | None:
+def _safe_number(
+    value: object,
+    *,
+    non_negative: bool = False,
+    integer_only: bool = False,
+    allowed_values: set[int] | None = None,
+) -> float | None:
     if value is None:
         return None
     text = str(value).strip()
@@ -287,7 +364,11 @@ def _safe_number(value: object, *, non_negative: bool = False) -> float | None:
         return None
     try:
         number = float(text.replace(",", ""))
-        return number if number == number and abs(number) != float("inf") and (not non_negative or number >= 0) else None
+        valid = number == number and abs(number) != float("inf")
+        valid = valid and (not non_negative or number >= 0)
+        valid = valid and (not integer_only or number.is_integer())
+        valid = valid and (allowed_values is None or number in allowed_values)
+        return number if valid else None
     except ValueError:
         return None
 
@@ -300,13 +381,23 @@ def _empty_eklaim_df() -> pd.DataFrame:
         "_icu_indikator_num",
         "_icu_los_num",
         "_rawat_intensif_num",
+        "_vent_hour_num",
+        "_tarif_inacbg_num",
+        *[f"_{col.lower()}_num" for col in TARIFF_COMPONENTS + ["TARIF_SUBACUTE", "TARIF_CHRONIC", "TARIF_SP", "TARIF_SR", "TARIF_SI", "TARIF_SD"]],
+        "_source",
+        "_row_number",
         "_sep_normalized",
         "_sep_valid",
         "_ptd",
         "_severity",
         "_dpjp_normalized",
         "_idrg_cost_weight",
+        "_idrg_total_cost_weight",
         "_idrg_drg_code",
         "_idrg_total_tarif",
+        "_idrg_grouper_version",
+        "_idrg_logic_version",
+        "_c2_status",
+        "_c2_issues",
     ]
     return pd.DataFrame(columns=columns)

@@ -149,6 +149,38 @@ def test_txt_upload_mixed_types_and_missing_values_can_render_and_export():
     assert any("kedaluwarsa" in warning.value for warning in app.warning)
 
 
+def test_txt_all_quarantined_input_renders_without_exception():
+    row = dict.fromkeys(REQUIRED_COLUMNS, "0")
+    row.update(SEP="not-a-sep", PTD="1", INACBG="K-4-17-I", DIAGLIST="A09.9", PROCLIST="90.59",
+               TOTAL_TARIF="1000", TARIF_RS="1200", LOS="2", DPJP="Dokter uji",
+               C2='{"idrg":{"cost_weight":0.5,"total_tarif":1100}}', NAMA_PASIEN="Uji", MRN="RM001")
+    content = pd.DataFrame([row]).to_csv(sep="\t", index=False).encode()
+    app = AppTest.from_string("from src.ui.txt_analysis import render_txt_analysis_tab\nrender_txt_analysis_tab()")
+    app.run()
+    app.file_uploader(key="eklaim_txt_ri").upload("invalid.txt", content, "text/plain").run()
+    app.button(key="run_eklaim_txt_analysis").click().run()
+
+    assert not app.exception
+    assert not app.error
+    assert app.session_state["eklaim_analysis"].summary["Total Klaim Keseluruhan"] == 0
+    assert len(app.session_state["eklaim_analysis"].quarantine_df) == 1
+
+
+def test_txt_cmi_metric_displays_four_decimal_places():
+    row = dict.fromkeys(REQUIRED_COLUMNS, "0")
+    row.update(SEP="0132R0770626V000001", PTD="1", INACBG="K-4-17-I", DIAGLIST="A09.9", PROCLIST="90.59",
+               TOTAL_TARIF="1000", TARIF_RS="1200", LOS="2", DPJP="Dokter uji",
+               C2='{"idrg":{"cost_weight":0.4927,"total_tarif":1100}}', NAMA_PASIEN="Uji", MRN="RM001")
+    content = pd.DataFrame([row]).to_csv(sep="\t", index=False).encode()
+    app = AppTest.from_string("from src.ui.txt_analysis import render_txt_analysis_tab\nrender_txt_analysis_tab()")
+    app.run()
+    app.file_uploader(key="eklaim_txt_ri").upload("valid.txt", content, "text/plain").run()
+    app.button(key="run_eklaim_txt_analysis").click().run()
+
+    assert not app.exception
+    assert any(metric.value == "0,4927" for metric in app.metric)
+
+
 def test_file_review_input_change_hides_old_export():
     sep = "0132R0770626V000001"
     excel = BytesIO()
