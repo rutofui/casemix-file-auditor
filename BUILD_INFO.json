@@ -1,5 +1,5 @@
 {
-  "built_at": "2026-09-25T05:59:54+07:00",
-  "commit_sha": "9fd0a1e",
-  "commit_message": "Improve TXT claim analysis accuracy"
+  "built_at": "2026-10-14T16:06:58+07:00",
+  "commit_sha": "ac17ef1",
+  "commit_message": "Fix casemix screening tariff gaps and complete code statistics"
 }
