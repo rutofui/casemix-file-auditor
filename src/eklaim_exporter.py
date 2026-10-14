@@ -61,10 +61,10 @@ def export_eklaim_analysis_to_excel(result: EklaimAnalysisResult) -> bytes:
         ("selisih_lebih_30pct", result.selisih_gt_30pct_df),
         ("selisih_dpjp_ri", normalize_analysis_frame(result.dpjp_ri_df)),
         ("selisih_dpjp_rj", normalize_analysis_frame(result.dpjp_rj_df)),
-        ("top30_icd10_ri", result.top_icd10_ri_df),
-        ("top30_icd10_rj", result.top_icd10_rj_df),
-        ("top30_icd9_ri", result.top_icd9_ri_df),
-        ("top30_icd9_rj", result.top_icd9_rj_df),
+        ("statistik_icd10_ri", result.top_icd10_ri_df),
+        ("statistik_icd10_rj", result.top_icd10_rj_df),
+        ("statistik_icd9_ri", result.top_icd9_ri_df),
+        ("statistik_icd9_rj", result.top_icd9_rj_df),
     ]
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:

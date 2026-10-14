@@ -109,6 +109,14 @@ Hasil tambahan mencakup aktivitas DPJP, pasien unik, ALOS/median/P90 rawat inap,
 
 Validasi meliputi identitas kosong, domain angka, tanggal/LOS, ICU, JSON C2, kode berulang, dan rekonsiliasi komponen tarif. LOS tidak dikoreksi otomatis. Aturan severity/LOS merupakan penapisan untuk telaah petugas, bukan kesimpulan kesalahan klaim. Produktivitas per jam/FTE, BOR/BTO/TOI, indeks efisiensi LOS, readmission terverifikasi, dan margin biaya memerlukan data tambahan yang dijelaskan dalam metodologi.
 
+Screening casemix mencakup:
+
+- Rawat inap dengan LOS <5 hari dan severity >1, atau LOS >5 hari dan severity 1. LOS tepat 5 hari tidak masuk kedua aturan.
+- Tarif klaim lebih besar dari tagihan RS, diperiksa terpisah untuk INA-CBG (`TOTAL_TARIF`) dan iDRG.
+- Selisih tarif **kedua arah** yang melebihi 30%: `abs(TARIF_RS - tarif klaim) / TARIF_RS x 100`. Tepat 30% tidak ditandai; perlu kedua tarif valid dan `TARIF_RS > 0`. Kolom selisih tetap bertanda positif bila klaim di bawah RS dan negatif bila klaim di atas RS.
+- Rawat intensif bila `ICU_INDIKATOR = 1`, `ICU_LOS > 0`, atau `RAWAT_INTENSIF > 0`.
+- Statistik **seluruh** kode diagnosis ICD-10 dan tindakan ICD-9-CM, terpisah rawat inap/rawat jalan: frekuensi kemunculan, jumlah klaim, dan prevalensi terhadap seluruh klaim yang dianalisis pada jenis rawat tersebut. Kode berulang dalam satu klaim dihitung sekali untuk jumlah klaim/prevalensi. Sheet Excel memakai nama `statistik_icd10_ri/rj` dan `statistik_icd9_ri/rj`, menggantikan `top30_*`.
+
 Excel memuat seluruh tabel beserta sumber, waktu proses, periode, versi, definisi, dan cakupan. Tarif dan persentase tetap numerik; teks dari input tidak dieksekusi sebagai formula Excel. Temuan kualitas, karantina, dan kedua basis tarif ikut tab tindak lanjut.
 
 ### 1. Review Jumlah Berkas

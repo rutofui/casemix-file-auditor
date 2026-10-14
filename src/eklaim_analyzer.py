@@ -367,7 +367,7 @@ def _build_top_codes_df(df: pd.DataFrame, *, code_column: str, label: str) -> pd
     rows = [
         {"Kode": code, "Jenis kode": label, "Frekuensi": count,
          "Jumlah Klaim": claims[code], "Prevalensi (%)": _percent(claims[code], len(df))}
-        for code, count in sorted(counter.items(), key=lambda item: (-item[1], item[0]))[:30]
+        for code, count in sorted(counter.items(), key=lambda item: (-item[1], item[0]))
     ]
     return pd.DataFrame(rows, columns=columns)
 
@@ -634,9 +634,9 @@ def _tariff_flags(df: pd.DataFrame, *, gap: bool) -> pd.DataFrame:
         tariff = _numbers(df, TARIFFS[label])
         difference = rs - tariff
         percent = difference.div(rs.where(rs.gt(0))) * 100
-        mask = percent.gt(30) if gap else tariff.gt(rs)
+        mask = percent.abs().gt(30) if gap else tariff.gt(rs)
         for index, claim in df.loc[mask].iterrows():
-            note = f"(Tarif RS - {label}) / Tarif RS > 30%" if gap else f"Tarif {label} lebih besar dari Tarif RS"
+            note = f"Selisih absolut Tarif RS dan {label} / Tarif RS > 30%" if gap else f"Tarif {label} lebih besar dari Tarif RS"
             row = _flag_row(claim, catatan=note)
             row.update({"Basis Tarif": label, "Selisih_Rp": _clean_number(difference.loc[index], integer=True),
                         "Selisih_Pct": _clean_number(percent.loc[index])})
@@ -783,6 +783,7 @@ def _methodology() -> pd.DataFrame:
         ("Tarif", "INA-CBG memakai TOTAL_TARIF; iDRG memakai C2.idrg.total_tarif; RS memakai TARIF_RS. Nilai file bukan bukti pembayaran, biaya aktual, atau laba/rugi."),
         ("Subtotal dan cakupan", "Total tarif adalah jumlah nilai valid; cakupan <100% berarti subtotal parsial. Kosong/tidak valid tidak diubah menjadi nol."),
         ("Selisih RS - grouper", "Jumlah (RS - grouper) dari pasangan valid; persen = jumlah selisih / jumlah RS pasangan itu x 100. Tarif RS nol tidak memiliki persen per klaim. Tabel menampilkan jumlah dan cakupan pasangan."),
+        ("Penapisan selisih >30%", "Per klaim dan per basis tarif: abs(TARIF_RS - tarif klaim) / TARIF_RS x 100 >30%, mencakup kedua arah. Tepat 30% tidak ditandai. Tarif RS harus >0 dan kedua tarif valid. Selisih_Rp/Selisih_Pct tetap bertanda: positif berarti klaim di bawah RS; negatif berarti klaim di atas RS."),
         ("Perubahan iDRG - INA-CBG", "Jumlah (iDRG - INA-CBG) dari pasangan valid; persen dibagi jumlah INA-CBG pada pasangan yang sama. Penyebut nol berarti tidak tersedia."),
         ("CMI iDRG", "Rata-rata cost_weight valid; jumlah klaim berbobot dan cakupan ditampilkan. Tanpa bobot valid atau versi iDRG berbeda, CMI tidak tersedia; profil kasus dipisah per versi."),
         ("Bobot lain", "Rata-rata total_cost_weight ditampilkan terpisah dan tidak disebut CMI resmi. CMI INA-CBG tidak tersedia tanpa referensi bobot INA-CBG. CMI RI/RJ tidak otomatis sebanding."),
@@ -792,7 +793,7 @@ def _methodology() -> pd.DataFrame:
         ("Penapisan severity", "Severity berasal dari suffix INA-CBG. Severity >1 dengan LOS <5 atau severity I dengan LOS >5 hanya penanda telaah, bukan bukti salah coding/inefisiensi."),
         ("Komponen tarif", "Porsi komponen = jumlah komponen / total tarif pada pasangan valid. Per klaim dibagi klaim dengan komponen valid; per hari dibagi total LOS RI positif pada pasangan komponen-LOS. Bukan biaya aktual."),
         ("ICU dan ventilator", "ICU positif bila indikator=1, ICU_LOS>0, atau tarif intensif>0. Negatif diketahui jika ketiganya nol; selain itu status tidak tersedia. Proporsi memakai episode dengan status diketahui. Median ICU_LOS memakai nilai >0. VENT_HOUR hanya tersedia jika field valid."),
-        ("Kode dan status pulang", "Top ICD menghitung semua kode tanpa mengasumsikan diagnosis utama. Frekuensi adalah kemunculan; jumlah klaim/prevalensi menghitung kode sekali per episode. Status pulang ditampilkan sebagai kode asli, tanpa asumsi mortalitas."),
+        ("Kode dan status pulang", "Statistik ICD menampilkan seluruh kode diagnosis/tindakan, terpisah RI/RJ, tanpa mengasumsikan diagnosis utama. Frekuensi adalah kemunculan; jumlah klaim menghitung kode sekali per episode; prevalensi = jumlah klaim berkode / seluruh klaim yang dianalisis pada jenis rawat tersebut x 100. Status pulang ditampilkan sebagai kode asli, tanpa asumsi mortalitas."),
         ("Pola waktu", "RAJAL memakai tanggal masuk; RANAP memakai tanggal pulang. Tanggal tidak valid dikecualikan. Kunjungan berulang dalam batch bukan readmission terverifikasi; hari dengan klaim bukan seluruh hari kerja."),
         ("Perubahan bulanan", "Perubahan klaim hanya dihitung untuk bulan kalender berurutan dalam file: (N bulan ini - N bulan lalu) / N bulan lalu x 100. Kelengkapan bulan tidak dijamin; bulan tanpa baris bukan otomatis nol aktivitas."),
         ("Data tambahan diperlukan", "BOR/BTO/TOI perlu kapasitas tempat tidur dan sensus lengkap; indeks efisiensi LOS perlu LOS harapan per kasus; margin perlu biaya aktual dan pendapatan; readmission perlu episode lintas periode; indikator mutu perlu definisi status dan penyesuaian risiko."),

@@ -176,9 +176,15 @@ def render_txt_analysis_results() -> None:
         "tarif_klaim_lebih_besar",
     )
     _render_section_table(
-        "Selisih Tarif RS - Tarif Klaim > 30% (per basis tarif)",
+        "Selisih Absolut Tarif Klaim dan Tarif RS > 30% (kedua arah, per basis tarif)",
         analysis.selisih_gt_30pct_df,
         "selisih_lebih_30pct",
+    )
+    st.caption(
+        "Penapisan >30% memakai abs(Tarif RS - Tarif Klaim) / Tarif RS x 100. "
+        "Tepat 30% tidak ditandai; Tarif RS nol/kosong/tidak valid tidak dihitung persentasenya. "
+        "Selisih positif berarti klaim di bawah tagihan RS; negatif berarti klaim di atas tagihan RS. "
+        "Basis INA-CBG memakai TOTAL_TARIF; iDRG memakai tarif pada C2."
     )
 
     st.subheader("Aktivitas dan profil layanan")
@@ -206,10 +212,14 @@ def render_txt_analysis_results() -> None:
     _render_section_table("Severity > 1 dan LOS < 5 (Rawat Inap)", analysis.severity_high_los_low_df, "severity_tinggi_los_rendah")
     _render_section_table("Severity 1 dan LOS > 5 (Rawat Inap)", analysis.severity_low_los_high_df, "severity_rendah_los_tinggi")
     _render_section_table("Rawat Intensif", analysis.intensive_care_df, "rawat_intensif")
-    _render_section_table("Top 30 ICD-10 (Rawat Inap)", analysis.top_icd10_ri_df, "top30_icd10_ri")
-    _render_section_table("Top 30 ICD-10 (Rawat Jalan)", analysis.top_icd10_rj_df, "top30_icd10_rj")
-    _render_section_table("Top 30 ICD-9-CM (Rawat Inap)", analysis.top_icd9_ri_df, "top30_icd9_ri")
-    _render_section_table("Top 30 ICD-9-CM (Rawat Jalan)", analysis.top_icd9_rj_df, "top30_icd9_rj")
+    st.caption(
+        "Statistik mencakup seluruh kode. Frekuensi menghitung kemunculan kode; jumlah klaim menghitung "
+        "kode sekali per klaim; prevalensi memakai seluruh klaim yang dianalisis pada jenis rawat tersebut."
+    )
+    _render_section_table("Statistik Kode Diagnosis ICD-10 (Rawat Inap)", analysis.top_icd10_ri_df, "statistik_icd10_ri")
+    _render_section_table("Statistik Kode Diagnosis ICD-10 (Rawat Jalan)", analysis.top_icd10_rj_df, "statistik_icd10_rj")
+    _render_section_table("Statistik Kode Tindakan ICD-9-CM (Rawat Inap)", analysis.top_icd9_ri_df, "statistik_icd9_ri")
+    _render_section_table("Statistik Kode Tindakan ICD-9-CM (Rawat Jalan)", analysis.top_icd9_rj_df, "statistik_icd9_rj")
 
     _render_optional_table(analysis, "metadata_df", "Metadata Analisis", "metadata_analisis")
     _render_optional_table(analysis, "methodology_df", "Definisi dan Metodologi", "metodologi_analisis")

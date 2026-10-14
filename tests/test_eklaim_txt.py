@@ -249,7 +249,7 @@ def test_build_eklaim_analysis_flags() -> None:
     assert analysis.severity_low_los_high_df.iloc[0]["NAMA_PASIEN"] == "PASIEN SEV LOW"
     assert len(analysis.completeness_df) == 2
     assert len(analysis.grouper_gt_rs_df.query("`Basis Tarif` == 'INA-CBG'")) == 1
-    assert len(analysis.selisih_gt_30pct_df.query("`Basis Tarif` == 'INA-CBG'")) == 1
+    assert len(analysis.selisih_gt_30pct_df.query("`Basis Tarif` == 'INA-CBG'")) == 2
     assert len(analysis.intensive_care_df) == 1
 
 
@@ -423,3 +423,71 @@ class TestBuildFileReviewClaims:
             "_icd9_codes",
         ]:
             assert column in claims.columns
+
+
+def test_screening_tariff_gap_both_directions_and_strict_boundary() -> None:
+    rows = []
+    for i, (claim, billing) in enumerate([
+        ("69", "100"), ("70", "100"), ("130", "100"), ("131", "100"),
+        ("100", "0"), ("100", ""), ("100", "invalid"), ("", "100"),
+    ], 1):
+        rows.append(_row(
+            sep=f"0132R0770626V{i:06d}", ptd=PTD_RAWAT_INAP, inacbg="A-4-14-I",
+            name=str(i), total_tarif=claim, tarif_rs=billing,
+            c2='{"idrg":{"total_tarif":"' + claim + '"}}',
+        ))
+    result = build_eklaim_analysis(read_eklaim_txt(_txt_content(*rows)).df, pd.DataFrame())
+    for basis in ("INA-CBG", "iDRG"):
+        gaps = result.selisih_gt_30pct_df.query("`Basis Tarif` == @basis")
+        assert set(gaps["NAMA_PASIEN"]) == {"1", "4"}
+        assert gaps.set_index("NAMA_PASIEN")["Selisih_Pct"].to_dict() == {"1": 31, "4": -31}
+        greater = result.grouper_gt_rs_df.query("`Basis Tarif` == @basis")
+        assert set(greater["NAMA_PASIEN"]) == {"3", "4", "5"}
+
+
+def test_screening_los_boundaries_and_each_intensive_indicator() -> None:
+    rows = []
+    for ptd in (PTD_RAWAT_INAP, PTD_RAWAT_JALAN):
+        for severity in ("I", "II", "III", "UNKNOWN"):
+            for los in ("4", "5", "6"):
+                rows.append(_row(
+                    sep=f"0132R0770626V{len(rows) + 1:06d}", ptd=ptd,
+                    inacbg=f"A-4-14-{severity}", los=los, name=f"{ptd}-{severity}-{los}",
+                ))
+    for indicator in ({"icu_ind": "1"}, {"icu_los": "1"}, {"rawat_intensif": "1"}):
+        rows.append(_row(
+            sep=f"0132R0770626V{len(rows) + 1:06d}", ptd=PTD_RAWAT_INAP,
+            inacbg="A-4-14-I", los="5", name=next(iter(indicator)), **indicator,
+        ))
+    result = build_eklaim_analysis(read_eklaim_txt(_txt_content(*rows)).df, pd.DataFrame())
+    assert set(result.severity_high_los_low_df["NAMA_PASIEN"]) == {"1-II-4", "1-III-4"}
+    assert set(result.severity_low_los_high_df["NAMA_PASIEN"]) == {"1-I-6"}
+    assert set(result.intensive_care_df["NAMA_PASIEN"]) == {"icu_ind", "icu_los", "rawat_intensif"}
+
+
+def test_all_diagnosis_and_procedure_codes_are_exported() -> None:
+    from openpyxl import load_workbook
+    from src.eklaim_exporter import export_eklaim_analysis_to_excel
+
+    diagnoses = [f"A{i:02d}" for i in range(35)]
+    procedures = [f"{i:02d}.01" for i in range(35)]
+    rows = [_row(
+        sep=f"0132R0770626V{i:06d}", ptd=ptd, inacbg="A-4-14-I",
+        diag=";".join(diagnoses + [diagnoses[0]]),
+        proc=";".join(procedures + [procedures[0]]),
+    ) for i, ptd in enumerate((PTD_RAWAT_INAP, PTD_RAWAT_JALAN), 1)]
+    result = build_eklaim_analysis(read_eklaim_txt(_txt_content(*rows)).df, pd.DataFrame())
+    workbook = load_workbook(io.BytesIO(export_eklaim_analysis_to_excel(result)))
+    for attribute, sheet, expected in (
+        ("top_icd10_ri_df", "statistik_icd10_ri", diagnoses),
+        ("top_icd10_rj_df", "statistik_icd10_rj", diagnoses),
+        ("top_icd9_ri_df", "statistik_icd9_ri", procedures),
+        ("top_icd9_rj_df", "statistik_icd9_rj", procedures),
+    ):
+        frame = getattr(result, attribute)
+        assert set(frame["Kode"]) == set(expected)
+        first = frame.set_index("Kode").loc[expected[0]]
+        assert first["Frekuensi"] == 2
+        assert first["Jumlah Klaim"] == 1
+        assert first["Prevalensi (%)"] == 100
+        assert {row[0] for row in workbook[sheet].iter_rows(min_row=2, values_only=True)} == set(expected)
